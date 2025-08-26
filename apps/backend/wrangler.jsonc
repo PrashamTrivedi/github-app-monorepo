@@ -14,6 +14,12 @@
           "database_name": "github-app-prod",
           "database_id": "your-production-db-id"
         }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "TOKEN_CACHE",
+          "id": "your-prod-token-cache-id"
+        }
       ]
     },
     "staging": {
@@ -25,6 +31,12 @@
           "binding": "DB",
           "database_name": "github-app-staging",
           "database_id": "your-staging-db-id"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "TOKEN_CACHE",
+          "id": "your-staging-token-cache-id"
         }
       ]
     }
@@ -40,10 +52,19 @@
       "preview_database_id": "your-preview-db-id"
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "TOKEN_CACHE",
+      "id": "your-dev-token-cache-id",
+      "preview_id": "your-dev-token-cache-preview-id"
+    }
+  ],
   "containers": [
     {
       "binding": "GIT_CONTAINER",
-      "image": "alpine/git:latest"
+      "image": "your-registry/github-git-container:latest",
+      "cpu_limit": 1000,
+      "memory_limit": 256
     }
   ]
 }
