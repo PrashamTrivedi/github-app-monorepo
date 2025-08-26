@@ -1,8 +1,23 @@
 import { Hono } from 'hono';
-import type { GitOperation } from '@github-app/shared';
-import { createApiResponse } from '@github-app/shared';
 import type { Env, ContainerExecRequest, ContainerExecResponse } from '../types.js';
 import { generateInstallationToken } from '../lib/github-auth.js';
+
+// Simple response helper since we can't import from shared
+function createApiResponse<T>(success: boolean, data?: T | null, error?: string) {
+  return { success, data, error };
+}
+
+// Git operation type since we can't import from shared
+interface GitOperation {
+  type: 'clone' | 'pull' | 'push' | 'commit';
+  repository: string;
+  branch?: string;
+  message?: string;
+  files?: Array<{
+    path: string;
+    content: string;
+  }>;
+}
 import { 
   getRepositoryByName, 
   createGitOperation, 
@@ -142,33 +157,55 @@ async function executeGitOperation(c: any, operation: GitOperation): Promise<str
     
     switch (operation.type) {
       case 'clone':
-        command = [
-          'git', 'clone', 
-          '--depth', '1',
-          repository.clone_url,
-          `/workspace/${repository.name}`
-        ];
-        if (operation.branch && operation.branch !== 'main') {
-          command.push('--branch', operation.branch);
-        }
+        // Prepare authenticated clone URL
+        const repoUrl = repository.clone_url.replace('https://github.com/', `https://x-access-token:${tokenData.token}@github.com/`);
+        
+        const cloneScript = [
+          'mkdir -p /workspace',
+          `git clone --depth 1 --single-branch --branch "${operation.branch || 'main'}" "${repoUrl}" "/workspace/${repository.name}"`,
+          'echo "Clone completed successfully"'
+        ].join(' && ');
+        
+        command = ['sh', '-c', cloneScript];
         break;
         
       case 'pull':
         workingDir = `/workspace/${repository.name}`;
-        command = ['git', 'pull', 'origin', operation.branch || 'main'];
+        // Setup git credentials and pull
+        const pullScript = [
+          `cd /workspace/${repository.name}`,
+          `git config credential.helper store`,
+          `echo "https://x-access-token:${tokenData.token}@github.com" > ~/.git-credentials`,
+          `git pull origin ${operation.branch || 'main'}`,
+          'echo "Pull completed successfully"'
+        ].join(' && ');
+        
+        command = ['sh', '-c', pullScript];
         break;
         
       case 'commit':
         workingDir = `/workspace/${repository.name}`;
-        // Multi-step commit process
+        // Handle file changes if provided
+        let fileChangeScript = '';
+        if (operation.files && operation.files.length > 0) {
+          const fileCommands = operation.files.map((file: { path: string; content: string }) => 
+            `echo ${JSON.stringify(file.content)} > "${file.path}"`
+          ).join(' && ');
+          fileChangeScript = fileCommands + ' && ';
+        }
+        
+        // Multi-step commit process with proper authentication
         const commitScript = [
           'set -e',
-          `cd ${workingDir}`,
+          `cd /workspace/${repository.name}`,
           'git config user.email "app@github.com"',
           'git config user.name "GitHub App Bot"',
-          'git add .',
-          `git commit -m "${operation.message?.replace(/"/g, '\\"') || 'Automated commit'}" || exit 0`,
-          `git push origin ${operation.branch || 'main'}`
+          'git config credential.helper store',
+          `echo "https://x-access-token:${tokenData.token}@github.com" > ~/.git-credentials`,
+          fileChangeScript + 'git add .',
+          `git commit -m "${operation.message?.replace(/"/g, '\\\\"') || 'Automated commit'}" || echo "No changes to commit"`,
+          `git push origin ${operation.branch || 'main'}`,
+          'echo "Commit and push completed successfully"'
         ].join(' && ');
         
         command = ['sh', '-c', commitScript];
@@ -176,7 +213,15 @@ async function executeGitOperation(c: any, operation: GitOperation): Promise<str
         
       case 'push':
         workingDir = `/workspace/${repository.name}`;
-        command = ['git', 'push', 'origin', operation.branch || 'main'];
+        const pushScript = [
+          `cd /workspace/${repository.name}`,
+          'git config credential.helper store',
+          `echo "https://x-access-token:${tokenData.token}@github.com" > ~/.git-credentials`,
+          `git push origin ${operation.branch || 'main'}`,
+          'echo "Push completed successfully"'
+        ].join(' && ');
+        
+        command = ['sh', '-c', pushScript];
         break;
         
       default:
@@ -196,19 +241,34 @@ async function executeGitOperation(c: any, operation: GitOperation): Promise<str
     };
     
     // Execute container operation using Cloudflare Container API
-    const response = await env.GIT_CONTAINER.fetch('http://container/exec', {
+    console.log(`Executing git operation: ${operation.type} for ${repository.name}`);
+    console.log(`Command: ${command.join(' ')}`);
+    
+    const response = await env.GIT_CONTAINER.fetch('http://localhost/exec', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'GitHub-App-Container/1.0'
       },
       body: JSON.stringify(execRequest)
     });
     
     if (!response.ok) {
-      throw new Error(`Container execution failed: ${response.status} ${await response.text()}`);
+      const errorText = await response.text();
+      console.error(`Container execution failed: ${response.status} ${errorText}`);
+      throw new Error(`Container execution failed: ${response.status} ${errorText}`);
     }
     
     const result: ContainerExecResponse = await response.json();
+    console.log(`Container operation completed with exit code: ${result.exitCode}`);
+    
+    // Log output for debugging
+    if (result.stdout) {
+      console.log(`Container stdout: ${result.stdout.substring(0, 500)}...`);
+    }
+    if (result.stderr) {
+      console.log(`Container stderr: ${result.stderr.substring(0, 500)}...`);
+    }
     
     if (result.exitCode !== 0) {
       const errorMessage = `Command failed with exit code ${result.exitCode}: ${result.stderr || result.error || 'Unknown error'}`;

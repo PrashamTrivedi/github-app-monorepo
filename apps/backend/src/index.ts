@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { App } from '@octokit/app';
 
 import { webhookRoutes } from './routes/webhooks.js';
 import { apiRoutes } from './routes/api.js';
@@ -26,18 +25,18 @@ app.get('/', (c) => {
   });
 });
 
-// Initialize GitHub App
+// Error handling middleware
 app.use('*', async (c, next) => {
-  const octokit = new App({
-    appId: c.env.GITHUB_APP_ID,
-    privateKey: c.env.GITHUB_PRIVATE_KEY,
-    webhooks: {
-      secret: c.env.GITHUB_WEBHOOK_SECRET,
-    },
-  });
-  
-  c.set('octokit', octokit);
-  await next();
+  try {
+    await next();
+  } catch (error) {
+    console.error('Unhandled error:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    return c.json({ 
+      success: false, 
+      error: message 
+    }, 500);
+  }
 });
 
 // Routes

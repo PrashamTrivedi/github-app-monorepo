@@ -1,7 +1,19 @@
 import { Hono } from 'hono';
-import type { GitHubRepository, GitHubIssue, ApiResponse } from '@github-app/shared';
-import { createApiResponse, parseRepositoryUrl } from '@github-app/shared';
 import type { Env } from '../types.js';
+import { generateInstallationToken } from '../lib/github-auth.js';
+import { getRepositoryByName } from '../lib/database.js';
+
+// Simple response helper since we can't import from shared
+function createApiResponse<T>(success: boolean, data?: T | null, error?: string) {
+  return { success, data, error };
+}
+
+// Simple URL parser since we can't import from shared
+function parseRepositoryUrl(url: string) {
+  const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+  if (!match) return null;
+  return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
+}
 
 export const apiRoutes = new Hono<{ Bindings: Env }>();
 
@@ -24,16 +36,32 @@ apiRoutes.get('/repo/:owner/:repo', async (c) => {
   try {
     const owner = c.req.param('owner');
     const repo = c.req.param('repo');
+    const fullName = `${owner}/${repo}`;
     
-    const octokit = c.get('octokit');
-    const installation = await octokit.getInstallationOctokit(123); // Replace with actual installation ID
+    // Get repository from database to find installation ID
+    const dbRepository = await getRepositoryByName(c.env.DB, fullName);
+    if (!dbRepository) {
+      return c.json(createApiResponse(false, null, 'Repository not found or app not installed'), 404);
+    }
     
-    const { data: repository } = await installation.rest.repos.get({
-      owner,
-      repo,
+    // Generate installation token
+    const tokenData = await generateInstallationToken(dbRepository.installation_id, c.env);
+    
+    // Make GitHub API call
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        'Authorization': `Bearer ${tokenData.token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'GitHub-App-Backend/1.0'
+      }
     });
     
-    return c.json(createApiResponse<GitHubRepository>(true, repository));
+    if (!response.ok) {
+      return c.json(createApiResponse(false, null, 'Repository not found'), 404);
+    }
+    
+    const repository = await response.json();
+    return c.json(createApiResponse(true, repository));
   } catch (error) {
     console.error('Error fetching repository:', error);
     return c.json(createApiResponse(false, null, 'Repository not found'), 404);
@@ -46,17 +74,32 @@ apiRoutes.get('/repo/:owner/:repo/issues', async (c) => {
     const owner = c.req.param('owner');
     const repo = c.req.param('repo');
     const state = c.req.query('state') || 'open';
+    const fullName = `${owner}/${repo}`;
     
-    const octokit = c.get('octokit');
-    const installation = await octokit.getInstallationOctokit(123); // Replace with actual installation ID
+    // Get repository from database to find installation ID
+    const dbRepository = await getRepositoryByName(c.env.DB, fullName);
+    if (!dbRepository) {
+      return c.json(createApiResponse(false, null, 'Repository not found or app not installed'), 404);
+    }
     
-    const { data: issues } = await installation.rest.issues.listForRepo({
-      owner,
-      repo,
-      state: state as 'open' | 'closed' | 'all',
+    // Generate installation token
+    const tokenData = await generateInstallationToken(dbRepository.installation_id, c.env);
+    
+    // Make GitHub API call
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=${state}`, {
+      headers: {
+        'Authorization': `Bearer ${tokenData.token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'GitHub-App-Backend/1.0'
+      }
     });
     
-    return c.json(createApiResponse<GitHubIssue[]>(true, issues));
+    if (!response.ok) {
+      return c.json(createApiResponse(false, null, 'Failed to fetch issues'), 500);
+    }
+    
+    const issues = await response.json();
+    return c.json(createApiResponse(true, issues));
   } catch (error) {
     console.error('Error fetching issues:', error);
     return c.json(createApiResponse(false, null, 'Failed to fetch issues'), 500);

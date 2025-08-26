@@ -120,7 +120,14 @@ export async function getInstallation(
 export async function getInstallationRepositories(
   installationId: number,
   env: Env
-): Promise<Array<GitHubInstallation['repositories'][0]>> {
+): Promise<Array<{
+  id: number;
+  name: string;
+  full_name: string;
+  owner: { login: string };
+  private: boolean;
+  clone_url: string;
+}>> {
   const tokenData = await generateInstallationToken(installationId, env);
   
   const response = await fetch('https://api.github.com/installation/repositories', {
@@ -135,7 +142,14 @@ export async function getInstallationRepositories(
     throw new Error(`Failed to get repositories: ${response.status}`);
   }
   
-  const data = await response.json();
+  const data = await response.json() as { repositories: Array<{
+    id: number;
+    name: string;
+    full_name: string;
+    owner: { login: string };
+    private: boolean;
+    clone_url: string;
+  }> };
   return data.repositories || [];
 }
 

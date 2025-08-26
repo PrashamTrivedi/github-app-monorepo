@@ -78,7 +78,14 @@ export async function storeInstallation(
 export async function storeRepository(
   db: D1Database,
   installationId: number,
-  repository: GitHubInstallation['repositories'][0]
+  repository: {
+    id: number;
+    name: string;
+    full_name: string;
+    owner: { login: string };
+    private: boolean;
+    clone_url: string;
+  }
 ): Promise<void> {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO repositories (id, installation_id, name, full_name, owner_login, private, clone_url)
@@ -125,7 +132,7 @@ export async function getInstallationRepositories(
   installationId: number
 ): Promise<Repository[]> {
   const stmt = db.prepare('SELECT * FROM repositories WHERE installation_id = ? ORDER BY name');
-  const result = await stmt.all<Repository>();
+  const result = await stmt.bind(installationId).all<Repository>();
   return result.results || [];
 }
 
@@ -260,6 +267,23 @@ export async function getRecentGitOperations(
     LIMIT ?
   `);
   
-  const result = await stmt.all<GitOperation>();
+  const result = await stmt.bind(repositoryId, limit).all<GitOperation>();
   return result.results || [];
+}
+
+/**
+ * Get installation ID for a repository
+ */
+export async function getInstallationIdByRepository(
+  db: D1Database,
+  fullName: string
+): Promise<number | null> {
+  const stmt = db.prepare(`
+    SELECT r.installation_id 
+    FROM repositories r 
+    WHERE r.full_name = ?
+  `);
+  
+  const result = await stmt.bind(fullName).first<{ installation_id: number }>();
+  return result?.installation_id || null;
 }
