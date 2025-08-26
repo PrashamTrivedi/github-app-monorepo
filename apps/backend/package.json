@@ -1,0 +1,29 @@
+{
+  "name": "@github-app/backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub App backend API with Hono and Cloudflare Workers",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "echo 'Build handled by wrangler'",
+    "deploy": "wrangler deploy",
+    "clean": "rm -rf dist",
+    "type-check": "tsc --noEmit",
+    "lint": "echo 'Linting not configured'"
+  },
+  "dependencies": {
+    "@github-app/shared": "workspace:*",
+    "hono": "^4.0.0",
+    "@octokit/app": "^14.0.0",
+    "@octokit/rest": "^20.0.0",
+    "@cloudflare/containers": "^1.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240129.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0",
+    "wrangler": "^3.25.0"
+  }
+}

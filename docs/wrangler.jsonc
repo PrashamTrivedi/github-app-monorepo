@@ -1,0 +1,83 @@
+{
+  // Cloudflare Workers configuration for GitHub Container Backend
+  "name": "github-container-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-01-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "b286748abb233ddf7bf942f876f11eac",
+  
+  // Environment variables (populated from .env)
+  "vars": {
+    "NODE_ENV": "development",
+    "WORKSPACE_DIR": "/app/workspace",
+    "GIT_DEFAULT_BRANCH": "main"
+  },
+  
+  // Secrets (set via wrangler secret put)
+  // GITHUB_APP_ID, GITHUB_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET
+  
+  // D1 Database binding
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "github-container-db",
+      "database_id": "75a5ca72-23b8-4b3d-8549-b734171d28b7"
+    }
+  ],
+  
+  // Development configuration
+  "dev": {
+    "port": 8787,
+    "local_protocol": "http"
+  },
+  
+  // Container configuration for git operations
+  // Note: Cloudflare Container configuration will be added when available
+  
+  "build": {
+    "command": "npm run build"
+  },
+  
+  // Multi-environment support
+  "env": {
+    "development": {
+      "name": "github-container-backend-dev",
+      "vars": {
+        "NODE_ENV": "development"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB", 
+          "database_name": "github-container-db-dev",
+          "preview_database_id": "github-container-db-local"
+        }
+      ]
+    },
+    "staging": {
+      "name": "github-container-backend-staging", 
+      "vars": {
+        "NODE_ENV": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "github-container-db-staging",
+          "database_id": "75a5ca72-23b8-4b3d-8549-b734171d28b7"
+        }
+      ]
+    },
+    "production": {
+      "name": "github-container-backend-prod",
+      "vars": {
+        "NODE_ENV": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "github-container-db",
+          "database_id": "75a5ca72-23b8-4b3d-8549-b734171d28b7"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "name": "github-app-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-01-15",
+  "node_compat": true,
+  "env": {
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "github-app-prod",
+          "database_id": "your-production-db-id"
+        }
+      ]
+    },
+    "staging": {
+      "vars": {
+        "ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "github-app-staging",
+          "database_id": "your-staging-db-id"
+        }
+      ]
+    }
+  },
+  "vars": {
+    "ENVIRONMENT": "development"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "github-app-dev",
+      "database_id": "your-dev-db-id",
+      "preview_database_id": "your-preview-db-id"
+    }
+  ],
+  "containers": [
+    {
+      "binding": "GIT_CONTAINER",
+      "image": "alpine/git:latest"
+    }
+  ]
+}
