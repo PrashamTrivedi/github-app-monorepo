@@ -1,8 +1,11 @@
-export interface Env {
-  // Bindings
-  DB: D1Database;
-  TOKEN_CACHE: KVNamespace;
-  GIT_CONTAINER: Container;
+/// <reference types="../worker-configuration" />
+
+import type { GitContainer } from './lib/git-container.js';
+
+// Extend the generated Cloudflare types
+export interface Env extends Cloudflare.Env {
+  // Container binding as DurableObjectNamespace
+  GIT_CONTAINER: DurableObjectNamespace<GitContainer>;
   
   // Environment variables (secrets)
   GITHUB_APP_ID: string;
@@ -10,7 +13,6 @@ export interface Env {
   GITHUB_WEBHOOK_SECRET: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
-  ENVIRONMENT: 'development' | 'staging' | 'production';
   
   // Optional runtime configuration
   CONTAINER_TIMEOUT?: string;

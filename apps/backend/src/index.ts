@@ -5,6 +5,7 @@ import { logger } from 'hono/logger';
 import { webhookRoutes } from './routes/webhooks.js';
 import { apiRoutes } from './routes/api.js';
 import { gitRoutes } from './routes/git.js';
+import { GitContainer } from './lib/git-container.js';
 import type { Env } from './types.js';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -23,6 +24,43 @@ app.get('/', (c) => {
     environment: c.env.ENVIRONMENT,
     timestamp: new Date().toISOString()
   });
+});
+
+// Environment validation middleware
+app.use('/api/*', async (c, next) => {
+  if (!c.env.DB) {
+    return c.json({ 
+      success: false, 
+      error: 'Database not configured' 
+    }, 503);
+  }
+  await next();
+});
+
+app.use('/git/*', async (c, next) => {
+  if (!c.env.DB) {
+    return c.json({ 
+      success: false, 
+      error: 'Database not configured' 
+    }, 503);
+  }
+  if (!c.env.GIT_CONTAINER) {
+    return c.json({ 
+      success: false, 
+      error: 'Container service not configured' 
+    }, 503);
+  }
+  await next();
+});
+
+app.use('/webhooks/*', async (c, next) => {
+  if (!c.env.DB) {
+    return c.json({ 
+      success: false, 
+      error: 'Database not configured' 
+    }, 503);
+  }
+  await next();
 });
 
 // Error handling middleware
@@ -45,3 +83,6 @@ app.route('/api', apiRoutes);
 app.route('/git', gitRoutes);
 
 export default app;
+
+// Export container class for Cloudflare runtime
+export { GitContainer };

@@ -1,8 +1,8 @@
 {
   "name": "github-app-backend",
   "main": "src/index.ts",
-  "compatibility_date": "2024-01-15",
-  "node_compat": true,
+  "compatibility_date": "2025-08-25",
+  "compatibility_flags": ["nodejs_compat"],
   "env": {
     "production": {
       "vars": {
@@ -48,8 +48,7 @@
     {
       "binding": "DB",
       "database_name": "github-app-dev",
-      "database_id": "your-dev-db-id",
-      "preview_database_id": "your-preview-db-id"
+      "database_id": "local-dev-db"
     }
   ],
   "kv_namespaces": [
@@ -61,10 +60,25 @@
   ],
   "containers": [
     {
-      "binding": "GIT_CONTAINER",
-      "image": "your-registry/github-git-container:latest",
-      "cpu_limit": 1000,
-      "memory_limit": 256
+      "max_instances": 10,
+      "class_name": "GitContainer",
+      "image": "./docker/Dockerfile"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GIT_CONTAINER",
+        "class_name": "GitContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "GitContainer"
+      ]
     }
   ]
 }
