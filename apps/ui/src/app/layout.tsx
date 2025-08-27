@@ -10,7 +10,6 @@ export const metadata: Metadata = {
   description: 'Manage your GitHub repositories and issues with ease',
 };
 
-
 export default function RootLayout({
   children,
 }: {
@@ -19,7 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <div className="min-h-screen bg-github-50 dark:bg-github-900">
+        <div className="min-h-screen bg-gray-50">
           <ClientNavigation />
           <main>{children}</main>
         </div>
