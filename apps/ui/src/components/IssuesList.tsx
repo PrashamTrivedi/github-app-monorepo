@@ -75,7 +75,7 @@ export function IssuesList({ issues, repository }: IssuesListProps) {
 
                   {issue.labels && issue.labels.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {issue.labels.slice(0, 5).map((label) => (
+                      {issue.labels.slice(0, 5).map((label: any) => (
                         <span
                           key={label.id}
                           className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"

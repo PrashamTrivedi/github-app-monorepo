@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { Env, ContainerExecRequest, ContainerExecResponse } from '../types.js';
+import type { Env } from '../types.js';
 import { generateInstallationToken } from '../lib/github-auth.js';
 
 // Simple response helper since we can't import from shared
@@ -25,6 +25,7 @@ import {
   getGitOperation, 
   getRecentGitOperations 
 } from '../lib/database.js';
+import { GitContainerService } from '../lib/git-container.js';
 
 export const gitRoutes = new Hono<{ Bindings: Env }>();
 
@@ -133,7 +134,7 @@ async function executeGitOperation(c: any, operation: GitOperation): Promise<str
   // Get repository information from database
   const repository = await getRepositoryByName(env.DB, operation.repository);
   if (!repository) {
-    throw new Error(`Repository ${operation.repository} not found in database`);
+    throw new Error(`Repository ${operation.repository} not accessible. Please ensure the GitHub App is installed on this repository and try again.`);
   }
   
   // Generate installation token for GitHub authentication
@@ -152,114 +153,70 @@ async function executeGitOperation(c: any, operation: GitOperation): Promise<str
     // Update status to running
     await updateGitOperation(env.DB, operationId, 'running');
     
-    let command: string[];
-    let workingDir = '/workspace';
+    if (!env.GIT_CONTAINER) {
+      throw new Error('Container service not available. Please configure GIT_CONTAINER binding.');
+    }
+    
+    // Create container service instance
+    const containerService = new GitContainerService(env.GIT_CONTAINER);
+    
+    console.log(`Executing git operation: ${operation.type} for ${repository.name}`);
+    
+    let result: { exitCode: number; stdout: string; stderr: string; };
     
     switch (operation.type) {
       case 'clone':
-        // Prepare authenticated clone URL
-        const repoUrl = repository.clone_url.replace('https://github.com/', `https://x-access-token:${tokenData.token}@github.com/`);
-        
-        const cloneScript = [
-          'mkdir -p /workspace',
-          `git clone --depth 1 --single-branch --branch "${operation.branch || 'main'}" "${repoUrl}" "/workspace/${repository.name}"`,
-          'echo "Clone completed successfully"'
-        ].join(' && ');
-        
-        command = ['sh', '-c', cloneScript];
+        result = await containerService.clone(
+          repository.clone_url,
+          operation.branch || 'main',
+          tokenData.token
+        );
         break;
         
       case 'pull':
-        workingDir = `/workspace/${repository.name}`;
-        // Setup git credentials and pull
-        const pullScript = [
-          `cd /workspace/${repository.name}`,
-          `git config credential.helper store`,
-          `echo "https://x-access-token:${tokenData.token}@github.com" > ~/.git-credentials`,
-          `git pull origin ${operation.branch || 'main'}`,
-          'echo "Pull completed successfully"'
-        ].join(' && ');
-        
-        command = ['sh', '-c', pullScript];
+        result = await containerService.pull(
+          tokenData.token,
+          operation.branch || 'main'
+        );
         break;
         
       case 'commit':
-        workingDir = `/workspace/${repository.name}`;
         // Handle file changes if provided
-        let fileChangeScript = '';
         if (operation.files && operation.files.length > 0) {
-          const fileCommands = operation.files.map((file: { path: string; content: string }) => 
-            `echo ${JSON.stringify(file.content)} > "${file.path}"`
-          ).join(' && ');
-          fileChangeScript = fileCommands + ' && ';
+          for (const file of operation.files) {
+            // Write file changes to workspace - this would need container support
+            await containerService.exec({
+              command: ['sh', '-c', `echo ${JSON.stringify(file.content)} > "${file.path}"`],
+              workingDir: '/workspace/repo',
+              timeout: 30000
+            });
+          }
         }
         
-        // Multi-step commit process with proper authentication
-        const commitScript = [
-          'set -e',
-          `cd /workspace/${repository.name}`,
-          'git config user.email "app@github.com"',
-          'git config user.name "GitHub App Bot"',
-          'git config credential.helper store',
-          `echo "https://x-access-token:${tokenData.token}@github.com" > ~/.git-credentials`,
-          fileChangeScript + 'git add .',
-          `git commit -m "${operation.message?.replace(/"/g, '\\\\"') || 'Automated commit'}" || echo "No changes to commit"`,
-          `git push origin ${operation.branch || 'main'}`,
-          'echo "Commit and push completed successfully"'
-        ].join(' && ');
-        
-        command = ['sh', '-c', commitScript];
+        result = await containerService.commitAndPush(
+          operation.message || 'Automated commit',
+          tokenData.token,
+          operation.branch || 'main'
+        );
         break;
         
       case 'push':
-        workingDir = `/workspace/${repository.name}`;
-        const pushScript = [
-          `cd /workspace/${repository.name}`,
-          'git config credential.helper store',
-          `echo "https://x-access-token:${tokenData.token}@github.com" > ~/.git-credentials`,
-          `git push origin ${operation.branch || 'main'}`,
-          'echo "Push completed successfully"'
-        ].join(' && ');
-        
-        command = ['sh', '-c', pushScript];
+        result = await containerService.exec({
+          command: ['git', 'push', 'origin', operation.branch || 'main'],
+          workingDir: '/workspace/repo',
+          timeout: 300000,
+          env: {
+            GIT_ASKPASS: '/usr/local/bin/git-askpass',
+            GIT_USERNAME: 'x-access-token',
+            GIT_PASSWORD: tokenData.token
+          }
+        });
         break;
         
       default:
         throw new Error(`Unsupported operation: ${operation.type}`);
     }
     
-    const execRequest: ContainerExecRequest = {
-      command,
-      workingDir,
-      env: {
-        GITHUB_TOKEN: tokenData.token,
-        GIT_AUTHOR_NAME: 'GitHub App Bot',
-        GIT_AUTHOR_EMAIL: 'app@github.com',
-        GIT_SSL_NO_VERIFY: '0' // Enable SSL verification for security
-      },
-      timeout: 300000 // 5 minutes timeout
-    };
-    
-    // Execute container operation using Cloudflare Container API
-    console.log(`Executing git operation: ${operation.type} for ${repository.name}`);
-    console.log(`Command: ${command.join(' ')}`);
-    
-    const response = await env.GIT_CONTAINER.fetch('http://localhost/exec', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'GitHub-App-Container/1.0'
-      },
-      body: JSON.stringify(execRequest)
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Container execution failed: ${response.status} ${errorText}`);
-      throw new Error(`Container execution failed: ${response.status} ${errorText}`);
-    }
-    
-    const result: ContainerExecResponse = await response.json();
     console.log(`Container operation completed with exit code: ${result.exitCode}`);
     
     // Log output for debugging
@@ -271,7 +228,7 @@ async function executeGitOperation(c: any, operation: GitOperation): Promise<str
     }
     
     if (result.exitCode !== 0) {
-      const errorMessage = `Command failed with exit code ${result.exitCode}: ${result.stderr || result.error || 'Unknown error'}`;
+      const errorMessage = `Command failed with exit code ${result.exitCode}: ${result.stderr || 'Unknown error'}`;
       await updateGitOperation(env.DB, operationId, 'failed', errorMessage);
       throw new Error(errorMessage);
     }

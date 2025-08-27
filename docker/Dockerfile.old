@@ -1,21 +1,32 @@
+# Simple Git Container for Cloudflare Workers
 FROM node:18-alpine
-# Cache bust: 2025-08-26-18:49
 
+# Install git and necessary tools
 RUN apk add --no-cache git curl openssh-client bash jq
+
+# Create directories
 RUN mkdir -p /workspace /app
+
+# Set working directory
 WORKDIR /app
 
+# Set git configuration defaults
 RUN git config --global user.name "GitHub App Bot" && \
     git config --global user.email "app@github.com" && \
     git config --global init.defaultBranch main
 
+# Create git askpass helper
 RUN echo '#!/bin/sh' > /usr/local/bin/git-askpass && \
     echo 'echo "$GIT_PASSWORD"' >> /usr/local/bin/git-askpass && \
     chmod +x /usr/local/bin/git-askpass
 
+# Copy application files
 COPY git-server.js /app/git-server.js
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Expose port
 EXPOSE 8080
+
+# Start the server
 ENTRYPOINT ["/entrypoint.sh"]

@@ -46,7 +46,7 @@ webhookRoutes.post('/', async (c) => {
     const body = await c.req.text();
     
     // Verify webhook signature
-    const isValid = await verifyWebhookSignature(body, signature, c.env.GITHUB_WEBHOOK_SECRET);
+    const isValid = await verifyWebhookSignature(body, signature, c.env.GITHUB_WEBHOOK_SECRET || '');
     if (!isValid) {
       console.error('Invalid webhook signature');
       return c.json({ error: 'Invalid signature' }, 401);

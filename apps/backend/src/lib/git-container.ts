@@ -1,18 +1,15 @@
-import { DurableObject, Container } from "cloudflare:workers";
+import { DurableObject } from "cloudflare:workers";
 import type { Env } from '../types.js';
 
 /**
  * Git Container - a Durable Object that provides containerized git operations
  */
-export class GitContainer extends DurableObject<Env> implements Container {
-  defaultPort = 8080;
-  sleepAfter = "10m";
-
+export class GitContainer extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
   }
 
-  async fetch(request: Request): Promise<Response> {
+  async fetch(_request: Request): Promise<Response> {
     // Container instances handle requests
     // This would typically proxy to the containerized application
     return new Response("Container instance running");
