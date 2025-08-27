@@ -1,13 +1,16 @@
 # Multi-stage build for Git Container
 FROM node:18-alpine AS base
 
-# Install git and other necessary tools
+# Install git, pnpm and other necessary tools
 RUN apk add --no-cache \
     git \
     curl \
     openssh-client \
     bash \
     && rm -rf /var/cache/apk/*
+
+# Install pnpm globally
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Create workspace directory
 RUN mkdir -p /workspace && chmod 755 /workspace
@@ -24,7 +27,7 @@ FROM node:18-alpine AS production
 COPY --from=base /usr/local/bin/git-askpass /usr/local/bin/git-askpass
 COPY --from=base /workspace /workspace
 
-# Install runtime dependencies
+# Install runtime dependencies and pnpm
 RUN apk add --no-cache \
     git \
     curl \
@@ -32,14 +35,17 @@ RUN apk add --no-cache \
     bash \
     && rm -rf /var/cache/apk/*
 
+# Install pnpm globally
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # Set working directory
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml* ./
 
-# Install production dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install production dependencies using pnpm
+RUN pnpm install --prod
 
 # Copy application code
 COPY src/ ./src/
