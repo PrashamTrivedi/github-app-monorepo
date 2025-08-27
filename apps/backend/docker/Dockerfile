@@ -1,5 +1,5 @@
 # Multi-stage build for Git Container
-FROM node:18-alpine AS base
+FROM node:22-alpine AS base
 
 # Install git, pnpm and other necessary tools
 RUN apk add --no-cache \
@@ -21,7 +21,7 @@ RUN echo '#!/bin/sh' > /usr/local/bin/git-askpass && \
     chmod +x /usr/local/bin/git-askpass
 
 # Production image
-FROM node:18-alpine AS production
+FROM node:22-alpine AS production
 
 # Copy tools and configuration from base
 COPY --from=base /usr/local/bin/git-askpass /usr/local/bin/git-askpass
