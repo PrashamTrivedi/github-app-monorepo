@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:22-alpine
 # Cache bust: 2025-08-26-18:49
 
 RUN apk add --no-cache git curl openssh-client bash jq
