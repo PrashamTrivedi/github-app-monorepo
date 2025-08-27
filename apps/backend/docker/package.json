@@ -1,0 +1,16 @@
+{
+  "name": "git-container-server",
+  "version": "1.0.0",
+  "description": "Git operations container server for GitHub App",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --inspect=0.0.0.0:9229 src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
