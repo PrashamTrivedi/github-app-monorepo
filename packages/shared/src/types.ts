@@ -3,6 +3,11 @@ export interface GitHubRepository {
   id: number;
   name: string;
   full_name: string;
+  description?: string;
+  language?: string;
+  stargazers_count?: number;
+  forks_count?: number;
+  open_issues_count?: number;
   owner: {
     id: number;
     login: string;
@@ -24,6 +29,17 @@ export interface GitHubIssue {
     id: number;
     login: string;
   };
+  assignee?: {
+    id: number;
+    login: string;
+  };
+  labels?: Array<{
+    id: number;
+    name: string;
+    color: string;
+    description?: string;
+  }>;
+  comments?: number;
   html_url: string;
   created_at: string;
   updated_at: string;
