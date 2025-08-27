@@ -1,4 +1,4 @@
-import type { ApiResponse } from '@github-app/shared';
+import type { ApiResponse, GitOperation } from '@github-app/shared';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8787';
 
@@ -30,6 +30,7 @@ class ApiClient {
     return response.json();
   }
 
+  // Repository operations
   async validateRepository(url: string) {
     return this.request('/api/validate-repo', {
       method: 'POST',
@@ -45,14 +46,47 @@ class ApiClient {
     return this.request(`/api/repo/${owner}/${repo}/issues?state=${state}`);
   }
 
+  // Installation management
   async getInstallations() {
     return this.request('/api/installations');
   }
 
-  async executeGitOperation(operation: any) {
+  // Git operations
+  async executeGitOperation(operation: GitOperation) {
     return this.request('/git/operation', {
       method: 'POST',
       body: JSON.stringify(operation),
+    });
+  }
+
+  async cloneRepository(repository: string, branch: string = 'main') {
+    return this.request('/git/clone', {
+      method: 'POST',
+      body: JSON.stringify({ repository, branch }),
+    });
+  }
+
+  async commitToRepository(repository: string, message: string, files: Array<{ path: string; content: string }>) {
+    return this.request('/git/commit', {
+      method: 'POST',
+      body: JSON.stringify({ repository, message, files }),
+    });
+  }
+
+  // Health check
+  async getHealth() {
+    return this.request('/');
+  }
+
+  // Webhook operations (for testing)
+  async sendTestWebhook(payload: any) {
+    return this.request('/webhooks', {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'ping',
+        'x-hub-signature-256': 'sha256=test-signature',
+      },
+      body: JSON.stringify(payload),
     });
   }
 }
