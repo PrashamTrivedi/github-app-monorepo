@@ -1,10 +1,17 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import type { Env } from '../types.js';
-import { generateInstallationToken } from '../lib/github-auth.js';
-import { getRepositoryByName } from '../lib/database.js';
+import { 
+  generateInstallationToken, 
+  checkRepositoryInstallation,
+  validateInstallationAccess,
+  getAllInstallationsFromGitHub
+} from '../lib/github-auth.js';
+import { 
+  getRepositoryByName, 
+  checkRepositoryInstallationStatus
+} from '../lib/database.js';
 import { Logger, PerformanceTimer } from '../lib/logger.js';
 import {
-  InstallationsResponseSchema,
   RepositoryResponseSchema, 
   IssuesResponseSchema,
   IssuesQuerySchema,
@@ -42,34 +49,8 @@ apiRoutes.get('/debug/env', async (c) => {
   });
 });
 
-// Get installations
-apiRoutes.openapi(
-  {
-    method: 'get',
-    path: '/installations',
-    summary: 'Get all GitHub App installations',
-    description: 'Returns a list of all GitHub App installations',
-    responses: {
-      200: {
-        description: 'List of installations',
-        content: {
-          'application/json': {
-            schema: InstallationsResponseSchema,
-          },
-        },
-      },
-      500: {
-        description: 'Internal server error',
-        content: {
-          'application/json': {
-            schema: InternalServerErrorResponseSchema,
-          },
-        },
-      },
-    },
-    tags: ['Installations'],
-  },
-  async (c) => {
+// Get installations - simplified without OpenAPI for now due to schema complexity
+apiRoutes.get('/installations', async (c) => {
     const logger = new Logger(c.env);
     const timer = new PerformanceTimer();
     
@@ -79,57 +60,32 @@ apiRoutes.openapi(
     });
     
     try {
-      // Try to fetch installations from GitHub API first
-      if (c.env.GITHUB_APP_ID && c.env.GITHUB_PRIVATE_KEY) {
-        logger.debug('api', 'Attempting GitHub API fetch for installations');
-        
-        try {
-          const { generateAppJWT } = await import('../lib/github-auth.js');
-          const appJWT = generateAppJWT(c.env);
-          
-          const apiTimer = new PerformanceTimer();
-          const endpoint = 'https://api.github.com/app/installations';
-          const response = await fetch(endpoint, {
-            headers: {
-              'Authorization': `Bearer ${appJWT}`,
-              'Accept': 'application/vnd.github.v3+json',
-              'User-Agent': 'GitHub-App-Backend/1.0'
-            }
-          });
-          
-          const apiDuration = apiTimer.end();
-          logger.logGitHubAPICall(endpoint, 'GET', response.status, apiDuration, {
-            operation: 'get_all_installations'
-          });
-          
-          if (response.ok) {
-            const installations = await response.json() as any[];
-            const totalDuration = timer.end();
-            
-            logger.info('api', 'Successfully fetched installations from GitHub API', {
-              installationCount: installations.length,
-              duration: totalDuration,
-              source: 'github_api'
-            });
-            
-            return c.json(createApiResponse(true, installations));
-          } else {
-            const error = await response.text();
-            logger.error('api', 'GitHub API error for installations', {
-              status: response.status,
-              error: error,
-              duration: apiDuration
-            });
-          }
-        } catch (githubError) {
-          logger.error('api', 'Error fetching installations from GitHub API', {
-            error: githubError instanceof Error ? githubError.message : String(githubError)
-          });
-        }
-      } else {
-        logger.info('api', 'GitHub credentials not available, falling back to database', {
-          hasAppId: !!c.env.GITHUB_APP_ID,
-          hasPrivateKey: !!c.env.GITHUB_PRIVATE_KEY
+      // Use enhanced GitHub API fetching with better error handling
+      const githubResult = await getAllInstallationsFromGitHub(c.env);
+      
+      if (githubResult.source === 'github' && githubResult.installations.length > 0) {
+        const totalDuration = timer.end();
+        logger.info('api', 'Successfully fetched installations from GitHub API', {
+          installationCount: githubResult.installations.length,
+          duration: totalDuration,
+          source: 'github_api'
+        });
+        return c.json(createApiResponse(true, githubResult.installations));
+      }
+      
+      if (githubResult.source === 'mock') {
+        const totalDuration = timer.end();
+        logger.info('api', 'Using mock installations for development', {
+          installationCount: githubResult.installations.length,
+          duration: totalDuration,
+          source: 'mock_data'
+        });
+        return c.json(createApiResponse(true, githubResult.installations));
+      }
+      
+      if (githubResult.error) {
+        logger.warn('api', 'GitHub API failed, falling back to database', {
+          error: githubResult.error
         });
       }
       
@@ -162,8 +118,7 @@ apiRoutes.openapi(
       });
       return c.json(createApiResponse(false, null, 'Failed to fetch installations'), 500);
     }
-  }
-);
+});
 
 // Get repository information
 apiRoutes.openapi(
@@ -228,18 +183,76 @@ apiRoutes.openapi(
       });
       
       if (!dbRepository) {
+        // Try to check if repository exists on GitHub but app is not installed
+        logger.debug('api', 'Repository not in database, checking GitHub installation status');
+        
+        const installationCheck = await checkRepositoryInstallation(owner, repo, c.env);
+        
+        if (!installationCheck.isInstalled) {
+          const duration = timer.end();
+          logger.warn('api', 'GitHub App not installed on repository', {
+            owner,
+            repo,
+            fullName,
+            error: installationCheck.error,
+            duration
+          });
+          return c.json(
+            createApiResponse(
+              false, 
+              null, 
+              installationCheck.error || 'GitHub App not installed on this repository'
+            ), 
+            404
+          );
+        }
+        
         const duration = timer.end();
-        logger.warn('api', 'Repository not found in database', {
+        logger.warn('api', 'Repository found on GitHub but not synced to database', {
           fullName,
+          installationId: installationCheck.installationId,
           duration
         });
-        return c.json(createApiResponse(false, null, 'Repository not found or app not installed'), 404);
+        return c.json(
+          createApiResponse(
+            false, 
+            null, 
+            'Repository not synced. Please trigger a webhook or refresh installation.'
+          ), 
+          404
+        );
       }
       
       logger.debug('api', 'Found repository in database', {
         fullName,
         installationId: dbRepository.installation_id
       });
+      
+      // Validate that the installation still has access to this repository
+      const accessValidation = await validateInstallationAccess(
+        dbRepository.installation_id, 
+        owner, 
+        repo, 
+        c.env
+      );
+      
+      if (!accessValidation.hasAccess) {
+        const duration = timer.end();
+        logger.warn('api', 'Installation no longer has access to repository', {
+          fullName,
+          installationId: dbRepository.installation_id,
+          error: accessValidation.error,
+          duration
+        });
+        return c.json(
+          createApiResponse(
+            false, 
+            null, 
+            'GitHub App no longer has access to this repository'
+          ), 
+          404
+        );
+      }
       
       // Generate installation token
       const tokenData = await generateInstallationToken(dbRepository.installation_id, c.env);
@@ -265,13 +278,40 @@ apiRoutes.openapi(
       
       if (!response.ok) {
         const duration = timer.end();
-        logger.error('api', 'GitHub API error fetching repository', {
-          owner,
-          repo,
-          status: response.status,
-          duration
-        });
-        return c.json(createApiResponse(false, null, 'Repository not found'), 404);
+        const errorText = await response.text();
+        
+        if (response.status === 404) {
+          logger.warn('api', 'Repository not found via GitHub API', {
+            owner,
+            repo,
+            status: response.status,
+            duration
+          });
+          return c.json(
+            createApiResponse(
+              false, 
+              null, 
+              'Repository not found or GitHub App does not have access'
+            ), 
+            404
+          );
+        } else {
+          logger.error('api', 'GitHub API error fetching repository', {
+            owner,
+            repo,
+            status: response.status,
+            error: errorText,
+            duration
+          });
+          return c.json(
+            createApiResponse(
+              false, 
+              null, 
+              `GitHub API error: ${response.status}`
+            ), 
+            response.status >= 500 ? 500 : 404
+          );
+        }
       }
       
       const repository = await response.json();
@@ -280,18 +320,47 @@ apiRoutes.openapi(
       logger.info('api', 'Successfully fetched repository information', {
         owner,
         repo,
-        repositoryId: repository.id,
+        repositoryId: (repository as any).id,
         duration
       });
       
       return c.json(createApiResponse(true, repository));
     } catch (error) {
       const duration = timer.end();
+      
+      // Enhanced error handling for repository endpoint
+      const { owner: ownerParam, repo: repoParam } = c.req.valid('param');
+      if (error instanceof Error && error.message.includes('installation')) {
+        logger.error('api', 'Installation error fetching repository', {
+          owner: ownerParam,
+          repo: repoParam,
+          error: error.message,
+          duration
+        });
+        return c.json(
+          createApiResponse(
+            false, 
+            null, 
+            'GitHub App not properly installed or configured'
+          ), 
+          500
+        );
+      }
+      
       logger.error('api', 'Error fetching repository', {
+        owner: ownerParam,
+        repo: repoParam,
         error: error instanceof Error ? error.message : String(error),
         duration
       });
-      return c.json(createApiResponse(false, null, 'Repository not found'), 404);
+      return c.json(
+        createApiResponse(
+          false, 
+          null, 
+          'Repository not found or GitHub App not installed'
+        ), 
+        404
+      );
     }
   }
 );
@@ -362,12 +431,44 @@ apiRoutes.openapi(
       });
       
       if (!dbRepository) {
+        // Try to check if repository exists on GitHub but app is not installed
+        logger.debug('api', 'Repository not in database, checking GitHub installation status');
+        
+        const installationCheck = await checkRepositoryInstallation(owner, repo, c.env);
+        
+        if (!installationCheck.isInstalled) {
+          const duration = timer.end();
+          logger.warn('api', 'GitHub App not installed on repository', {
+            owner,
+            repo,
+            fullName,
+            error: installationCheck.error,
+            duration
+          });
+          return c.json(
+            createApiResponse(
+              false, 
+              null, 
+              installationCheck.error || 'GitHub App not installed on this repository'
+            ), 
+            404
+          );
+        }
+        
         const duration = timer.end();
-        logger.warn('api', 'Repository not found for issues fetch', {
+        logger.warn('api', 'Repository found on GitHub but not synced to database', {
           fullName,
+          installationId: installationCheck.installationId,
           duration
         });
-        return c.json(createApiResponse(false, null, 'Repository not found or app not installed'), 404);
+        return c.json(
+          createApiResponse(
+            false, 
+            null, 
+            'Repository not synced. Please trigger a webhook or refresh installation.'
+          ), 
+          404
+        );
       }
       
       // Generate installation token
@@ -395,14 +496,42 @@ apiRoutes.openapi(
       
       if (!response.ok) {
         const duration = timer.end();
-        logger.error('api', 'Failed to fetch issues from GitHub API', {
-          owner,
-          repo,
-          state,
-          status: response.status,
-          duration
-        });
-        return c.json(createApiResponse(false, null, 'Failed to fetch issues'), 500);
+        const errorText = await response.text();
+        
+        if (response.status === 404) {
+          logger.warn('api', 'Repository or issues not accessible via GitHub API', {
+            owner,
+            repo,
+            state,
+            status: response.status,
+            duration
+          });
+          return c.json(
+            createApiResponse(
+              false, 
+              null, 
+              'Repository not found or GitHub App does not have access to issues'
+            ), 
+            404
+          );
+        } else {
+          logger.error('api', 'Failed to fetch issues from GitHub API', {
+            owner,
+            repo,
+            state,
+            status: response.status,
+            error: errorText,
+            duration
+          });
+          return c.json(
+            createApiResponse(
+              false, 
+              null, 
+              `GitHub API error: ${response.status}`
+            ), 
+            response.status >= 500 ? 500 : 404
+          );
+        }
       }
       
       const issues = await response.json();
@@ -419,14 +548,156 @@ apiRoutes.openapi(
       return c.json(createApiResponse(true, issues));
     } catch (error) {
       const duration = timer.end();
+      
+      // Enhanced error handling for issues endpoint
+      const { owner: ownerParam, repo: repoParam } = c.req.valid('param');
+      const { state: stateParam } = c.req.valid('query');
+      if (error instanceof Error && error.message.includes('installation')) {
+        logger.error('api', 'Installation error fetching issues', {
+          owner: ownerParam,
+          repo: repoParam,
+          state: stateParam,
+          error: error.message,
+          duration
+        });
+        return c.json(
+          createApiResponse(
+            false, 
+            null, 
+            'GitHub App not properly installed or configured for this repository'
+          ), 
+          500
+        );
+      }
+      
       logger.error('api', 'Error fetching issues', {
+        owner: ownerParam,
+        repo: repoParam,
+        state: stateParam,
         error: error instanceof Error ? error.message : String(error),
         duration
       });
-      return c.json(createApiResponse(false, null, 'Failed to fetch issues'), 500);
+      return c.json(
+        createApiResponse(
+          false, 
+          null, 
+          'Failed to fetch issues - repository may not be accessible or app not installed'
+        ), 
+        500
+      );
     }
   }
 );
+
+// Check repository installation status - simplified route
+apiRoutes.get('/repo/:owner/:repo/installation-status', async (c) => {
+    const logger = new Logger(c.env);
+    const timer = new PerformanceTimer();
+    
+    try {
+      const { owner, repo } = c.req.param();
+      const fullName = `${owner}/${repo}`;
+      
+      logger.info('api', 'Checking repository installation status', {
+        owner,
+        repo,
+        fullName
+      });
+      
+      // Check database first for quick lookup
+      const dbStatus = await checkRepositoryInstallationStatus(c.env.DB, fullName);
+      
+      // If found in database, validate GitHub access
+      if (dbStatus.exists && dbStatus.installationId) {
+        logger.debug('api', 'Found repository in database, validating GitHub access');
+        
+        const accessValidation = await validateInstallationAccess(
+          dbStatus.installationId, 
+          owner, 
+          repo, 
+          c.env
+        );
+        
+        const duration = timer.end();
+        
+        if (accessValidation.hasAccess) {
+          logger.info('api', 'Repository installation confirmed', {
+            fullName,
+            installationId: dbStatus.installationId,
+            source: 'database_validated',
+            duration
+          });
+          
+          return c.json(createApiResponse(true, {
+            isInstalled: true,
+            installationId: dbStatus.installationId,
+            hasAccess: true,
+            source: 'database',
+            repository: dbStatus.repository
+          }));
+        } else {
+          logger.warn('api', 'Installation exists in database but no GitHub access', {
+            fullName,
+            installationId: dbStatus.installationId,
+            error: accessValidation.error,
+            duration
+          });
+          
+          return c.json(createApiResponse(false, {
+            isInstalled: false,
+            hasAccess: false,
+            source: 'database',
+            repository: dbStatus.repository
+          }, accessValidation.error));
+        }
+      }
+      
+      // Not in database, check GitHub directly
+      logger.debug('api', 'Repository not in database, checking GitHub directly');
+      const installationCheck = await checkRepositoryInstallation(owner, repo, c.env);
+      
+      const duration = timer.end();
+      
+      if (installationCheck.isInstalled) {
+        logger.info('api', 'Repository found on GitHub with app installed', {
+          fullName,
+          installationId: installationCheck.installationId,
+          source: 'github_api',
+          duration
+        });
+        
+        return c.json(createApiResponse(true, {
+          isInstalled: true,
+          installationId: installationCheck.installationId,
+          hasAccess: true,
+          source: 'github'
+        }));
+      } else {
+        logger.warn('api', 'Repository installation check failed', {
+          fullName,
+          error: installationCheck.error,
+          source: 'github_api',
+          duration
+        });
+        
+        return c.json(createApiResponse(false, {
+          isInstalled: false,
+          hasAccess: false,
+          source: 'github'
+        }, installationCheck.error), 404);
+      }
+    } catch (error) {
+      const duration = timer.end();
+      logger.error('api', 'Error checking repository installation status', {
+        error: error instanceof Error ? error.message : String(error),
+        duration
+      });
+      return c.json(
+        createApiResponse(false, null, 'Failed to check installation status'), 
+        500
+      );
+    }
+});
 
 // Validate repository URL
 apiRoutes.openapi(
@@ -486,13 +757,42 @@ apiRoutes.openapi(
         return c.json(createApiResponse(false, null, 'Invalid GitHub repository URL'), 400);
       }
       
-      logger.info('api', 'Successfully validated repository URL', {
-        owner: parsed.owner,
-        repo: parsed.repo,
-        duration
-      });
-      
-      return c.json(createApiResponse(true, parsed));
+      // Also check installation status for the parsed repository
+      try {
+        const installationCheck = await checkRepositoryInstallation(parsed.owner, parsed.repo, c.env);
+        
+        logger.info('api', 'Successfully validated repository URL with installation check', {
+          owner: parsed.owner,
+          repo: parsed.repo,
+          isInstalled: installationCheck.isInstalled,
+          duration
+        });
+        
+        return c.json(createApiResponse(true, {
+          ...parsed,
+          installationStatus: {
+            isInstalled: installationCheck.isInstalled,
+            installationId: installationCheck.installationId,
+            error: installationCheck.error
+          }
+        }));
+      } catch (installationError) {
+        // If installation check fails, still return the parsed URL
+        logger.warn('api', 'Repository URL valid but installation check failed', {
+          owner: parsed.owner,
+          repo: parsed.repo,
+          installationError: installationError instanceof Error ? installationError.message : String(installationError),
+          duration
+        });
+        
+        return c.json(createApiResponse(true, {
+          ...parsed,
+          installationStatus: {
+            isInstalled: false,
+            error: 'Could not verify installation status'
+          }
+        }));
+      }
     } catch (error) {
       const duration = timer.end();
       logger.error('api', 'Error validating repository URL', {

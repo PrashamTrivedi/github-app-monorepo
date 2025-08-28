@@ -343,3 +343,67 @@ export async function getInstallationIdByRepository(
   const result = await stmt.bind(fullName).first<{ installation_id: number }>();
   return result?.installation_id || null;
 }
+
+/**
+ * Check if repository exists in database and get installation details
+ */
+export async function checkRepositoryInstallationStatus(
+  db: D1Database,
+  fullName: string
+): Promise<{
+  exists: boolean;
+  installationId?: number;
+  repository?: Repository;
+  installation?: Installation;
+}> {
+  try {
+    // Get repository first
+    const repository = await getRepositoryByName(db, fullName);
+    if (!repository) {
+      return { exists: false };
+    }
+
+    // Get installation details
+    const installation = await getInstallation(db, repository.installation_id);
+    
+    return {
+      exists: true,
+      installationId: repository.installation_id,
+      repository,
+      installation: installation || undefined
+    };
+  } catch (error) {
+    console.error('Database error checking repository installation status:', error);
+    
+    // Return mock data for development when database is not available
+    if ((error as any)?.message?.includes('no such table') || (error as any)?.message?.includes('Database')) {
+      const mockRepos = ['octocat/Hello-World', 'demo-user/test-repo'];
+      if (mockRepos.includes(fullName)) {
+        return {
+          exists: true,
+          installationId: 12345,
+          repository: {
+            id: mockRepos.indexOf(fullName) + 1,
+            installation_id: 12345,
+            name: fullName.split('/')[1],
+            full_name: fullName,
+            owner_login: fullName.split('/')[0],
+            private: false,
+            clone_url: `https://github.com/${fullName}.git`,
+            created_at: new Date().toISOString()
+          },
+          installation: {
+            id: 12345,
+            account_id: 67890,
+            account_login: 'demo-user',
+            account_type: 'User',
+            permissions: JSON.stringify({ contents: 'read', metadata: 'read' }),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        };
+      }
+    }
+    throw error;
+  }
+}

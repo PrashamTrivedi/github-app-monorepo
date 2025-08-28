@@ -318,6 +318,41 @@ export async function getInstallationRepositories(
   });
   
   try {
+    // Return mock repositories for development when GitHub app is not configured
+    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+      logger.warn('github-auth', 'GitHub App credentials not configured, using mock repositories for development', {
+        installationId,
+        environment: env.ENVIRONMENT
+      });
+      
+      const duration = timer.end();
+      logger.info('github-auth', 'Returning mock installation repositories', {
+        installationId,
+        repositoryCount: 2,
+        source: 'mock_data',
+        duration
+      });
+      
+      return [
+        {
+          id: 1,
+          name: 'Hello-World',
+          full_name: 'octocat/Hello-World',
+          owner: { login: 'octocat' },
+          private: false,
+          clone_url: 'https://github.com/octocat/Hello-World.git'
+        },
+        {
+          id: 2,
+          name: 'test-repo',
+          full_name: 'demo-user/test-repo',
+          owner: { login: 'demo-user' },
+          private: false,
+          clone_url: 'https://github.com/demo-user/test-repo.git'
+        }
+      ];
+    }
+    
     const tokenData = await generateInstallationToken(installationId, env);
     
     const endpoint = 'https://api.github.com/installation/repositories';
@@ -370,6 +405,339 @@ export async function getInstallationRepositories(
       error: error instanceof Error ? error.message : String(error)
     });
     throw error;
+  }
+}
+
+/**
+ * Check if the GitHub App is installed on a specific repository
+ */
+export async function checkRepositoryInstallation(
+  owner: string,
+  repo: string,
+  env: Env
+): Promise<{
+  isInstalled: boolean;
+  installationId?: number;
+  error?: string;
+}> {
+  const logger = new Logger(env);
+  const timer = new PerformanceTimer();
+  
+  logger.debug('github-auth', 'Checking repository installation status', {
+    owner,
+    repo,
+    fullName: `${owner}/${repo}`
+  });
+  
+  try {
+    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+      // In mock mode, only allow specific test repositories
+      const mockRepos = ['octocat/Hello-World', 'demo-user/test-repo'];
+      const fullName = `${owner}/${repo}`;
+      
+      if (mockRepos.includes(fullName)) {
+        logger.warn('github-auth', 'GitHub credentials not configured, mock repository found', {
+          owner,
+          repo,
+          fullName,
+          environment: env.ENVIRONMENT
+        });
+        timer.end();
+        return {
+          isInstalled: true,
+          installationId: 12345, // Mock installation ID for development
+          error: undefined
+        };
+      } else {
+        logger.warn('github-auth', 'GitHub credentials not configured, repository not in mock list', {
+          owner,
+          repo,
+          fullName,
+          environment: env.ENVIRONMENT,
+          mockRepos
+        });
+        timer.end();
+        return {
+          isInstalled: false,
+          error: 'GitHub App not installed on this repository'
+        };
+      }
+    }
+
+    const appJWT = generateAppJWT(env);
+    
+    // Get all installations and check if the repository is accessible
+    const endpoint = 'https://api.github.com/app/installations';
+    const response = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${appJWT}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'GitHub-App-Backend/1.0'
+      }
+    });
+    
+    const duration = timer.end();
+    logger.logGitHubAPICall(endpoint, 'GET', response.status, duration, {
+      owner,
+      repo,
+      operation: 'check_repository_installation'
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      logger.error('github-auth', 'Failed to fetch installations for repository check', {
+        owner,
+        repo,
+        status: response.status,
+        error
+      });
+      return {
+        isInstalled: false,
+        error: `GitHub API error: ${response.status}`
+      };
+    }
+    
+    const installations = await response.json() as GitHubInstallation[];
+    
+    // Check each installation to see if it has access to the repository
+    for (const installation of installations) {
+      try {
+        const repositories = await getInstallationRepositories(installation.id, env);
+        const targetRepo = repositories.find(r => r.full_name === `${owner}/${repo}`);
+        
+        if (targetRepo) {
+          logger.info('github-auth', 'Found repository in installation', {
+            owner,
+            repo,
+            installationId: installation.id,
+            accountLogin: installation.account.login
+          });
+          return {
+            isInstalled: true,
+            installationId: installation.id
+          };
+        }
+      } catch (error) {
+        logger.warn('github-auth', 'Error checking installation repositories', {
+          installationId: installation.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue; // Try next installation
+      }
+    }
+    
+    logger.info('github-auth', 'Repository not found in any installation', {
+      owner,
+      repo,
+      installationsChecked: installations.length
+    });
+    
+    return {
+      isInstalled: false,
+      error: 'GitHub App not installed on this repository'
+    };
+  } catch (error) {
+    const duration = timer.end();
+    logger.error('github-auth', 'Error checking repository installation', {
+      owner,
+      repo,
+      duration,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return {
+      isInstalled: false,
+      error: error instanceof Error ? error.message : 'Unknown error checking installation'
+    };
+  }
+}
+
+/**
+ * Validate installation access for a specific repository by installation ID
+ */
+export async function validateInstallationAccess(
+  installationId: number,
+  owner: string,
+  repo: string,
+  env: Env
+): Promise<{
+  hasAccess: boolean;
+  error?: string;
+}> {
+  const logger = new Logger(env);
+  const timer = new PerformanceTimer();
+  
+  logger.debug('github-auth', 'Validating installation access to repository', {
+    installationId,
+    owner,
+    repo
+  });
+  
+  try {
+    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+      logger.warn('github-auth', 'GitHub credentials not configured, assuming access for development', {
+        installationId,
+        owner,
+        repo,
+        environment: env.ENVIRONMENT
+      });
+      return { hasAccess: true };
+    }
+
+    const repositories = await getInstallationRepositories(installationId, env);
+    const targetRepo = repositories.find(r => r.full_name === `${owner}/${repo}`);
+    
+    const duration = timer.end();
+    
+    if (targetRepo) {
+      logger.info('github-auth', 'Installation has access to repository', {
+        installationId,
+        owner,
+        repo,
+        repositoryId: targetRepo.id,
+        duration
+      });
+      return { hasAccess: true };
+    } else {
+      // For mock mode, check if this is one of the mock repositories
+      const mockRepos = ['octocat/Hello-World', 'demo-user/test-repo'];
+      const fullName = `${owner}/${repo}`;
+      
+      if (!env.GITHUB_APP_ID && mockRepos.includes(fullName)) {
+        logger.info('github-auth', 'Mock installation has access to repository', {
+          installationId,
+          owner,
+          repo,
+          fullName,
+          source: 'mock_data',
+          duration
+        });
+        return { hasAccess: true };
+      }
+      
+      logger.warn('github-auth', 'Installation does not have access to repository', {
+        installationId,
+        owner,
+        repo,
+        availableRepos: repositories.map(r => r.full_name),
+        duration
+      });
+      return {
+        hasAccess: false,
+        error: 'Installation does not have access to this repository'
+      };
+    }
+  } catch (error) {
+    const duration = timer.end();
+    logger.error('github-auth', 'Error validating installation access', {
+      installationId,
+      owner,
+      repo,
+      duration,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return {
+      hasAccess: false,
+      error: error instanceof Error ? error.message : 'Error validating access'
+    };
+  }
+}
+
+/**
+ * Get all installations with enhanced error handling and validation
+ */
+export async function getAllInstallationsFromGitHub(
+  env: Env
+): Promise<{
+  installations: GitHubInstallation[];
+  source: 'github' | 'database' | 'mock';
+  error?: string;
+}> {
+  const logger = new Logger(env);
+  const timer = new PerformanceTimer();
+  
+  logger.debug('github-auth', 'Fetching all installations from GitHub');
+  
+  // Return mock data if no credentials are configured
+  if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+    logger.warn('github-auth', 'GitHub credentials not configured, using mock installations', {
+      environment: env.ENVIRONMENT
+    });
+    
+    const mockInstallations: GitHubInstallation[] = [{
+      id: 12345,
+      account: {
+        id: 67890,
+        login: 'demo-user',
+        type: 'User'
+      },
+      permissions: {
+        contents: 'read',
+        metadata: 'read'
+      }
+    }];
+    
+    return {
+      installations: mockInstallations,
+      source: 'mock'
+    };
+  }
+  
+  try {
+    const appJWT = generateAppJWT(env);
+    const apiTimer = new PerformanceTimer();
+    
+    const endpoint = 'https://api.github.com/app/installations';
+    const response = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${appJWT}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'GitHub-App-Backend/1.0'
+      }
+    });
+    
+    const apiDuration = apiTimer.end();
+    logger.logGitHubAPICall(endpoint, 'GET', response.status, apiDuration, {
+      operation: 'get_all_installations_enhanced'
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      const duration = timer.end();
+      logger.error('github-auth', 'GitHub API error fetching installations', {
+        status: response.status,
+        error,
+        duration
+      });
+      return {
+        installations: [],
+        source: 'github',
+        error: `GitHub API error: ${response.status} - ${error}`
+      };
+    }
+    
+    const installations = await response.json() as GitHubInstallation[];
+    const duration = timer.end();
+    
+    logger.info('github-auth', 'Successfully fetched installations from GitHub', {
+      installationCount: installations.length,
+      duration
+    });
+    
+    return {
+      installations,
+      source: 'github'
+    };
+  } catch (error) {
+    const duration = timer.end();
+    logger.error('github-auth', 'Error fetching installations from GitHub', {
+      duration,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return {
+      installations: [],
+      source: 'github',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
   }
 }
 
