@@ -73,6 +73,14 @@ class ApiClient {
     return this.request('/api/installations');
   }
 
+  async getGitHubAppStatus() {
+    return this.request('/api/github-app/status');
+  }
+
+  async handleInstallationCallback(installationId: string, setupAction: string) {
+    return this.request(`/api/installation/callback?installation_id=${installationId}&setup_action=${setupAction}`);
+  }
+
   // Git operations
   async executeGitOperation(operation: GitOperation) {
     return this.request('/git/operation', {

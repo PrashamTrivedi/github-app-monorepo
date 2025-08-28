@@ -13,8 +13,16 @@ export function InstallationFlow({ onInstallationComplete }: InstallationFlowPro
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCheckingCallback, setIsCheckingCallback] = useState(false);
+  const [appStatus, setAppStatus] = useState<{
+    configured: boolean;
+    mode?: string;
+    appId?: string;
+    credentialsValid?: boolean;
+    error?: string;
+  } | null>(null);
 
   useEffect(() => {
+    loadAppStatus();
     loadInstallations();
     
     // Check if we're returning from GitHub OAuth flow
@@ -26,6 +34,17 @@ export function InstallationFlow({ onInstallationComplete }: InstallationFlowPro
       handleInstallationCallback(installationId, setupAction);
     }
   }, []);
+
+  const loadAppStatus = async () => {
+    try {
+      const response = await apiClient.getGitHubAppStatus();
+      if (response.success && response.data) {
+        setAppStatus(response.data as any);
+      }
+    } catch (err) {
+      console.error('Failed to load GitHub App status:', err);
+    }
+  };
 
   const loadInstallations = async () => {
     try {
@@ -47,27 +66,36 @@ export function InstallationFlow({ onInstallationComplete }: InstallationFlowPro
     }
   };
 
-  const handleInstallationCallback = async (installationId: string, _setupAction: string) => {
+  const handleInstallationCallback = async (installationId: string, setupAction: string) => {
     setIsCheckingCallback(true);
+    setError(null);
     
     try {
-      // Wait a moment for GitHub to process the installation
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Process the installation callback through the backend
+      const response = await apiClient.handleInstallationCallback(installationId, setupAction);
       
-      // Reload installations to get the new one
-      await loadInstallations();
-      
-      // Find the new installation
-      const newInstallation = installations.find(inst => inst.id.toString() === installationId);
-      
-      if (newInstallation && onInstallationComplete) {
-        onInstallationComplete(newInstallation);
+      if (response.success) {
+        // Wait a moment for processing to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Reload installations to get the new one
+        await loadInstallations();
+        
+        // Find the new installation
+        const newInstallation = installations.find(inst => inst.id.toString() === installationId);
+        
+        if (newInstallation && onInstallationComplete) {
+          onInstallationComplete(newInstallation);
+        }
+        
+        // Clean up URL parameters
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else {
+        setError(response.error || 'Failed to process installation callback');
       }
-      
-      // Clean up URL parameters
-      window.history.replaceState({}, document.title, window.location.pathname);
     } catch (err) {
-      setError('Failed to process installation. Please try again.');
+      console.error('Installation callback error:', err);
+      setError('Failed to process installation. Please try refreshing the page.');
     } finally {
       setIsCheckingCallback(false);
     }
@@ -75,9 +103,20 @@ export function InstallationFlow({ onInstallationComplete }: InstallationFlowPro
 
   const getInstallUrl = () => {
     const appName = process.env.NEXT_PUBLIC_GITHUB_APP_NAME || 'your-github-app-name';
+    const callbackUrl = encodeURIComponent(`${window.location.origin}/api/installation/callback`);
     const returnUrl = encodeURIComponent(window.location.origin + window.location.pathname);
-    return `https://github.com/apps/${appName}/installations/new?state=${returnUrl}`;
+    
+    if (!appStatus?.configured) {
+      // For development mode without credentials, show a different URL
+      return `https://github.com/apps/${appName}/installations/new?state=${returnUrl}`;
+    }
+    
+    // For production with configured app, use the callback URL
+    return `https://github.com/apps/${appName}/installations/new?state=${returnUrl}&callback=${callbackUrl}`;
   };
+
+  const isAppConfigured = appStatus?.configured === true;
+  const isInDevelopmentMode = appStatus?.mode === 'development';
 
   if (isCheckingCallback) {
     return (
@@ -94,6 +133,63 @@ export function InstallationFlow({ onInstallationComplete }: InstallationFlowPro
 
   return (
     <div className="space-y-6">
+      {/* GitHub App Configuration Status */}
+      {appStatus && (
+        <div className={`rounded-lg shadow-sm border p-6 ${
+          isInDevelopmentMode 
+            ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+            : isAppConfigured 
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+        }`}>
+          <div className="flex items-center">
+            {isInDevelopmentMode ? (
+              <svg className="w-5 h-5 text-yellow-400 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            ) : isAppConfigured ? (
+              <svg className="w-5 h-5 text-green-400 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-red-400 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            )}
+            <div>
+              <h3 className={`text-sm font-medium ${
+                isInDevelopmentMode 
+                  ? 'text-yellow-800 dark:text-yellow-200'
+                  : isAppConfigured 
+                    ? 'text-green-800 dark:text-green-200'
+                    : 'text-red-800 dark:text-red-200'
+              }`}>
+                {isInDevelopmentMode 
+                  ? 'Development Mode'
+                  : isAppConfigured 
+                    ? 'GitHub App Configured'
+                    : 'GitHub App Not Configured'
+                }
+              </h3>
+              <p className={`text-sm ${
+                isInDevelopmentMode 
+                  ? 'text-yellow-700 dark:text-yellow-300'
+                  : isAppConfigured 
+                    ? 'text-green-700 dark:text-green-300'
+                    : 'text-red-700 dark:text-red-300'
+              }`}>
+                {isInDevelopmentMode 
+                  ? 'Using mock data for testing. Configure GitHub App credentials for production.'
+                  : isAppConfigured 
+                    ? `Connected to GitHub App ${appStatus.appId}. Real installations will be synchronized.`
+                    : 'GitHub App credentials are missing or invalid. Installations cannot be processed.'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Installation Status */}
       <div className="bg-white dark:bg-github-800 rounded-lg shadow-sm border border-github-200 dark:border-github-700 p-6">
         <div className="flex items-center justify-between mb-4">
@@ -248,18 +344,34 @@ export function InstallationFlow({ onInstallationComplete }: InstallationFlowPro
           </svg>
           <div>
             <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
-              About GitHub App Installation
+              {isInDevelopmentMode ? 'Development Mode Information' : 'About GitHub App Installation'}
             </h3>
             <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
-              <p className="mb-2">
-                The GitHub App needs to be installed with appropriate permissions to:
-              </p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Read repository content and metadata</li>
-                <li>Access repository issues and pull requests</li>
-                <li>Perform git operations (clone, commit, push)</li>
-                <li>Receive webhook notifications for repository events</li>
-              </ul>
+              {isInDevelopmentMode ? (
+                <>
+                  <p className="mb-2">
+                    You are currently running in development mode with mock data. To enable real GitHub App installations:
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Create a GitHub App at <a href="https://github.com/settings/apps" target="_blank" rel="noopener noreferrer" className="underline">GitHub Settings → Developer settings → GitHub Apps</a></li>
+                    <li>Set the webhook URL to your backend endpoint</li>
+                    <li>Configure the required permissions (repository content, issues, pull requests)</li>
+                    <li>Add the App ID and private key to your environment variables</li>
+                  </ol>
+                </>
+              ) : (
+                <>
+                  <p className="mb-2">
+                    The GitHub App needs to be installed with appropriate permissions to:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>Read repository content and metadata</li>
+                    <li>Access repository issues and pull requests</li>
+                    <li>Perform git operations (clone, commit, push)</li>
+                    <li>Receive webhook notifications for repository events</li>
+                  </ul>
+                </>
+              )}
             </div>
           </div>
         </div>
