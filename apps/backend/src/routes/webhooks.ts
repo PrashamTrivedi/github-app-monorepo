@@ -130,7 +130,7 @@ webhookRoutes.openapi(
       
       // Verify webhook signature
       const signatureTimer = new PerformanceTimer();
-      const isValid = await verifyWebhookSignature(body, signature, c.env.GITHUB_WEBHOOK_SECRET || '', c.env);
+      const isValid = await verifyWebhookSignature(body, signature, c.env);
       const signatureDuration = signatureTimer.end();
       
       if (!isValid) {

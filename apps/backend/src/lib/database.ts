@@ -1,4 +1,4 @@
-import type { D1Database } from '@cloudflare/workers-types';
+// D1Database type is available globally from generated worker configuration
 import type { GitHubInstallation } from './github-auth.js';
 
 export interface Installation {

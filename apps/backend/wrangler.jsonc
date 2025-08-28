@@ -2,13 +2,15 @@
   "name": "github-app-backend",
   "main": "src/index.ts",
   "compatibility_date": "2025-08-25",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "env": {
     "production": {
       "vars": {
         "ENVIRONMENT": "production"
       },
-      "secrets": ["GITHUB_APP_ID", "GITHUB_WEBHOOK_SECRET", "GITHUB_PRIVATE_KEY_CHUNK_1", "GITHUB_PRIVATE_KEY_CHUNK_2"],
+      
       "d1_databases": [
         {
           "binding": "DB",
@@ -20,6 +22,10 @@
         {
           "binding": "TOKEN_CACHE",
           "id": "your-prod-token-cache-id"
+        },
+        {
+          "binding": "GITHUB_CONFIG",
+          "id": "your-prod-github-config-id"
         }
       ]
     },
@@ -27,7 +33,6 @@
       "vars": {
         "ENVIRONMENT": "staging"
       },
-      "secrets": ["GITHUB_APP_ID", "GITHUB_WEBHOOK_SECRET", "GITHUB_PRIVATE_KEY_CHUNK_1", "GITHUB_PRIVATE_KEY_CHUNK_2"],
       "d1_databases": [
         {
           "binding": "DB",
@@ -39,6 +44,10 @@
         {
           "binding": "TOKEN_CACHE",
           "id": "your-staging-token-cache-id"
+        },
+        {
+          "binding": "GITHUB_CONFIG",
+          "id": "your-staging-github-config-id"
         }
       ]
     }
@@ -58,6 +67,11 @@
       "binding": "TOKEN_CACHE",
       "id": "your-dev-token-cache-id",
       "preview_id": "your-dev-token-cache-preview-id"
+    },
+    {
+      "binding": "GITHUB_CONFIG",
+      "id": "your-dev-github-config-id",
+      "preview_id": "your-dev-github-config-preview-id"
     }
   ],
   "containers": [

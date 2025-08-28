@@ -27,49 +27,93 @@ export interface InstallationToken {
   expires_at: string;
 }
 
+export interface GitHubConfig {
+  app_id: string;
+  private_key: string;
+  webhook_secret: string;
+}
+
+/**
+ * Load GitHub configuration from KV Store
+ */
+async function loadGitHubConfig(env: Env): Promise<GitHubConfig> {
+  const logger = new Logger(env);
+  
+  try {
+    if (!env.GITHUB_CONFIG) {
+      logger.error('github-auth', 'GITHUB_CONFIG KV namespace not configured', {
+        environment: env.ENVIRONMENT
+      });
+      throw new Error('GITHUB_CONFIG KV namespace is required');
+    }
+
+    const configJson = await env.GITHUB_CONFIG.get('github_config');
+    if (!configJson) {
+      logger.error('github-auth', 'GitHub config not found in KV Store', {
+        key: 'github_config',
+        environment: env.ENVIRONMENT
+      });
+      throw new Error('GitHub configuration not found in KV Store - use setup script to configure');
+    }
+
+    const config = JSON.parse(configJson) as GitHubConfig;
+    
+    // Validate required fields
+    if (!config.app_id || !config.private_key || !config.webhook_secret) {
+      logger.error('github-auth', 'Invalid GitHub config structure', {
+        hasAppId: !!config.app_id,
+        hasPrivateKey: !!config.private_key,
+        hasWebhookSecret: !!config.webhook_secret
+      });
+      throw new Error('GitHub configuration is missing required fields (app_id, private_key, webhook_secret)');
+    }
+
+    logger.debug('github-auth', 'Successfully loaded GitHub config from KV', {
+      appId: config.app_id,
+      privateKeyLength: config.private_key.length,
+      hasWebhookSecret: !!config.webhook_secret
+    });
+
+    return config;
+  } catch (error) {
+    logger.error('github-auth', 'Error loading GitHub config from KV', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
+}
+
 /**
  * Generate a GitHub App JWT token for authentication
  */
-export function generateAppJWT(env: Env): string {
+export async function generateAppJWT(env: Env): Promise<string> {
   const logger = new Logger(env);
   const timer = new PerformanceTimer();
   
   try {
-    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-      logger.error('github-auth', 'GitHub App credentials not configured', {
-        hasAppId: !!env.GITHUB_APP_ID,
-        hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
-      });
-      throw new Error('GitHub App ID and Private Key are required');
-    }
-
+    const config = await loadGitHubConfig(env);
+    
     logger.debug('github-auth', 'Generating GitHub App JWT', {
-      appId: env.GITHUB_APP_ID
+      appId: config.app_id
     });
 
     const now = Math.floor(Date.now() / 1000);
     const payload = {
       iat: now - 60, // Issued at time (allow 60 seconds of clock skew)
       exp: now + (10 * 60), // JWT expires in 10 minutes
-      iss: env.GITHUB_APP_ID // GitHub App ID
+      iss: config.app_id // GitHub App ID
     };
     
-    // Handle both RSA and PKCS#8 key formats
-    let privateKey = env.GITHUB_PRIVATE_KEY;
+    // Clean up private key format
+    let privateKey = config.private_key.replace(/\\n/g, '\n');
     
-    // If key is split into chunks (workaround for Cloudflare secret size limit)
-    if (!privateKey && env.GITHUB_PRIVATE_KEY_CHUNK_1) {
-      privateKey = [
-        env.GITHUB_PRIVATE_KEY_CHUNK_1,
-        env.GITHUB_PRIVATE_KEY_CHUNK_2
-      ].filter(Boolean).join('');
-    }
-    
-    if (!privateKey) {
-      throw new Error('GitHub Private Key not found in environment or chunks');
-    }
-    
-    privateKey = privateKey.replace(/\\n/g, '\n');
+    logger.info('github-auth', 'Private key loaded successfully', {
+      source: 'kv',
+      keyLength: privateKey.length,
+      startsWithBegin: privateKey.startsWith('-----BEGIN'),
+      endsWithEnd: privateKey.endsWith('-----'),
+      environment: env.ENVIRONMENT
+    });
     
     const jwt_token = jwt.sign(payload, privateKey, { 
       algorithm: 'RS256' 
@@ -77,7 +121,7 @@ export function generateAppJWT(env: Env): string {
 
     const duration = timer.end();
     logger.logAuthEvent('jwt_generation', true, undefined, duration, {
-      appId: env.GITHUB_APP_ID
+      appId: config.app_id
     });
 
     return jwt_token;
@@ -104,17 +148,18 @@ export async function generateInstallationToken(
     installationId
   });
 
-  // Ensure GitHub app credentials are configured
-  if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+  // Ensure GitHub config is available
+  try {
+    await loadGitHubConfig(env);
+  } catch (error) {
     const duration = timer.end();
-    logger.error('github-auth', 'GitHub App credentials not configured', {
+    logger.error('github-auth', 'GitHub App configuration not available', {
       installationId,
       environment: env.ENVIRONMENT,
-      hasAppId: !!env.GITHUB_APP_ID,
-      hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
+      error: error instanceof Error ? error.message : String(error)
     });
     logger.logAuthEvent('installation_token_error', false, installationId, duration);
-    throw new Error('GitHub App credentials (GITHUB_APP_ID and GITHUB_PRIVATE_KEY) are required');
+    throw new Error('GitHub App configuration not available in KV Store');
   }
 
   // Check cache first (if available)
@@ -158,7 +203,7 @@ export async function generateInstallationToken(
   }
   
   try {
-    const appJWT = generateAppJWT(env);
+    const appJWT = await generateAppJWT(env);
     const apiTimer = new PerformanceTimer();
     
     const endpoint = `https://api.github.com/app/installations/${installationId}/access_tokens`;
@@ -248,7 +293,7 @@ export async function getInstallation(
   });
   
   try {
-    const appJWT = generateAppJWT(env);
+    const appJWT = await generateAppJWT(env);
     
     const endpoint = `https://api.github.com/app/installations/${installationId}`;
     const response = await fetch(endpoint, {
@@ -392,23 +437,25 @@ export async function checkRepositoryInstallation(
   });
   
   try {
-    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+    // Check if GitHub config is available
+    try {
+      await loadGitHubConfig(env);
+    } catch (error) {
       const duration = timer.end();
-      logger.error('github-auth', 'GitHub App credentials not configured', {
+      logger.error('github-auth', 'GitHub App configuration not available', {
         owner,
         repo,
         environment: env.ENVIRONMENT,
-        hasAppId: !!env.GITHUB_APP_ID,
-        hasPrivateKey: !!env.GITHUB_PRIVATE_KEY,
-        duration
+        duration,
+        error: error instanceof Error ? error.message : String(error)
       });
       return {
         isInstalled: false,
-        error: 'GitHub App credentials (GITHUB_APP_ID and GITHUB_PRIVATE_KEY) are required'
+        error: 'GitHub App configuration not available in KV Store'
       };
     }
 
-    const appJWT = generateAppJWT(env);
+    const appJWT = await generateAppJWT(env);
     
     // Get all installations and check if the repository is accessible
     const endpoint = 'https://api.github.com/app/installations';
@@ -517,12 +564,16 @@ export async function validateInstallationAccess(
   });
   
   try {
-    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-      logger.warn('github-auth', 'GitHub credentials not configured, assuming access for development', {
+    // Check if GitHub config is available
+    try {
+      await loadGitHubConfig(env);
+    } catch (error) {
+      logger.warn('github-auth', 'GitHub configuration not available, assuming access for development', {
         installationId,
         owner,
         repo,
-        environment: env.ENVIRONMENT
+        environment: env.ENVIRONMENT,
+        error: error instanceof Error ? error.message : String(error)
       });
       return { hasAccess: true };
     }
@@ -586,24 +637,25 @@ export async function getAllInstallationsFromGitHub(
   
   logger.debug('github-auth', 'Fetching all installations from GitHub');
   
-  // Ensure GitHub app credentials are configured
-  if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+  // Ensure GitHub configuration is available
+  try {
+    await loadGitHubConfig(env);
+  } catch (error) {
     const duration = timer.end();
-    logger.error('github-auth', 'GitHub App credentials not configured', {
+    logger.error('github-auth', 'GitHub App configuration not available', {
       environment: env.ENVIRONMENT,
-      hasAppId: !!env.GITHUB_APP_ID,
-      hasPrivateKey: !!env.GITHUB_PRIVATE_KEY,
-      duration
+      duration,
+      error: error instanceof Error ? error.message : String(error)
     });
     return {
       installations: [],
       source: 'github',
-      error: 'GitHub App credentials (GITHUB_APP_ID and GITHUB_PRIVATE_KEY) are required'
+      error: 'GitHub App configuration not available in KV Store'
     };
   }
   
   try {
-    const appJWT = generateAppJWT(env);
+    const appJWT = await generateAppJWT(env);
     const apiTimer = new PerformanceTimer();
     
     const endpoint = 'https://api.github.com/app/installations';
@@ -662,21 +714,37 @@ export async function getAllInstallationsFromGitHub(
 }
 
 /**
- * Verify webhook signature
+ * Verify webhook signature using secret from KV Store
  */
 export async function verifyWebhookSignature(
   payload: string,
   signature: string,
-  secret: string,
   env: Env
 ): Promise<boolean> {
   const logger = new Logger(env);
   const timer = new PerformanceTimer();
   
   try {
+    // Load webhook secret from KV Store
+    let secret = '';
+    try {
+      const config = await loadGitHubConfig(env);
+      secret = config.webhook_secret;
+    } catch (error) {
+      logger.warn('webhook-auth', 'No webhook secret available, skipping signature verification (development mode)', {
+        environment: env.ENVIRONMENT,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      const duration = timer.end();
+      logger.logAuthEvent('webhook_signature_skip', true, undefined, duration, {
+        reason: 'no_secret_kv_unavailable'
+      });
+      return true;
+    }
+    
     // Allow for development mode without webhook secret
     if (!secret) {
-      logger.warn('webhook-auth', 'No webhook secret provided, skipping signature verification (development mode)', {
+      logger.warn('webhook-auth', 'No webhook secret configured, skipping signature verification (development mode)', {
         environment: env.ENVIRONMENT
       });
       const duration = timer.end();

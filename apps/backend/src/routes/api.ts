@@ -1,10 +1,12 @@
 import {OpenAPIHono} from '@hono/zod-openapi'
-import type {Env} from '../types.js'
+
 import {
   generateInstallationToken,
   checkRepositoryInstallation,
   validateInstallationAccess,
-  getAllInstallationsFromGitHub
+  getAllInstallationsFromGitHub,
+  generateAppJWT,
+  type GitHubConfig
 } from '../lib/github-auth.js'
 import {
   getRepositoryByName,
@@ -25,10 +27,34 @@ import {
   NotFoundResponseSchema,
   InternalServerErrorResponseSchema,
 } from '../schemas/common.js'
+import type { Env } from '../types.js'
 
 // Simple response helper since we can't import from shared
 function createApiResponse<T>(success: boolean, data?: T | null, error?: string) {
   return {success, data, error}
+}
+
+// Helper to check if GitHub config is available
+async function checkGitHubConfig(env: Env): Promise<{ configured: boolean, config?: GitHubConfig, error?: string }> {
+  try {
+    if (!env.GITHUB_CONFIG) {
+      return { configured: false, error: 'GITHUB_CONFIG KV namespace not configured' };
+    }
+    
+    const configJson = await env.GITHUB_CONFIG.get('github_config');
+    if (!configJson) {
+      return { configured: false, error: 'GitHub config not found in KV Store' };
+    }
+    
+    const config = JSON.parse(configJson) as GitHubConfig;
+    if (!config.app_id || !config.private_key || !config.webhook_secret) {
+      return { configured: false, error: 'GitHub config missing required fields' };
+    }
+    
+    return { configured: true, config };
+  } catch (error) {
+    return { configured: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
 }
 
 // Simple URL parser since we can't import from shared  
@@ -42,11 +68,13 @@ export const apiRoutes = new OpenAPIHono<{Bindings: Env}>()
 
 // Debug endpoint to check environment variables
 apiRoutes.get('/debug/env', async (c) => {
+  const configCheck = await checkGitHubConfig(c.env);
   return c.json({
-    hasGitHubAppId: !!c.env.GITHUB_APP_ID,
-    hasGitHubPrivateKey: !!c.env.GITHUB_PRIVATE_KEY,
-    appIdLength: c.env.GITHUB_APP_ID?.length || 0,
-    keyStartsWith: c.env.GITHUB_PRIVATE_KEY?.substring(0, 30) || 'not found'
+    hasGitHubConfig: configCheck.configured,
+    gitHubAppId: configCheck.config?.app_id || null,
+    configError: configCheck.error || null,
+    kvNamespaceAvailable: !!c.env.GITHUB_CONFIG,
+    environment: c.env.ENVIRONMENT
   })
 })
 
@@ -80,15 +108,16 @@ apiRoutes.openapi(
   async (c) => {
     const logger = new Logger(c.env)
     const timer = new PerformanceTimer()
+    const configCheck = await checkGitHubConfig(c.env);
 
     logger.info('api', 'Fetching installations', {
       envVars: Object.keys(c.env),
-      hasCredentials: !!(c.env.GITHUB_APP_ID && c.env.GITHUB_PRIVATE_KEY),
-      hasAppId: !!c.env.GITHUB_APP_ID,
-      hasPrivateKey: !!c.env.GITHUB_PRIVATE_KEY,
-      hasBothChunks: !!(c.env.GITHUB_PRIVATE_KEY_CHUNK_1 && c.env.GITHUB_PRIVATE_KEY_CHUNK_2),
+      hasGitHubConfig: configCheck.configured,
+      appId: configCheck.config?.app_id || null,
+      configError: configCheck.error || null,
       environment: c.env.ENVIRONMENT
     })
+
 
     try {
       // Use enhanced GitHub API fetching with better error handling
@@ -755,12 +784,14 @@ apiRoutes.get('/installation/callback', async (c) => {
       return c.json(createApiResponse(false, null, 'Missing installation_id parameter'), 400)
     }
 
-    if (!c.env.GITHUB_APP_ID || !c.env.GITHUB_PRIVATE_KEY) {
+    const configCheck = await checkGitHubConfig(c.env);
+    if (!configCheck.configured) {
       const duration = timer.end()
       logger.warn('api', 'GitHub App not configured for installation callback', {
         installationId,
         setupAction,
-        duration
+        duration,
+        configError: configCheck.error
       })
 
       // For development, return success but indicate mock mode
@@ -837,23 +868,23 @@ apiRoutes.get('/github-app/status', async (c) => {
   const timer = new PerformanceTimer()
 
   try {
-    const hasCredentials = !!(c.env.GITHUB_APP_ID && c.env.GITHUB_PRIVATE_KEY)
+    const configCheck = await checkGitHubConfig(c.env);
 
     let appInfo = null
-    if (hasCredentials) {
+    if (configCheck.configured && configCheck.config) {
       try {
         // Try to generate a JWT to test credentials
-        const jwt = generateAppJWT(c.env)
+        const jwt = await generateAppJWT(c.env)
         const isValid = !!jwt
 
         appInfo = {
-          appId: c.env.GITHUB_APP_ID,
+          appId: configCheck.config.app_id,
           configured: true,
           credentialsValid: isValid
         }
       } catch (error) {
         appInfo = {
-          appId: c.env.GITHUB_APP_ID,
+          appId: configCheck.config.app_id,
           configured: true,
           credentialsValid: false,
           error: error instanceof Error ? error.message : 'Invalid credentials'
@@ -862,13 +893,14 @@ apiRoutes.get('/github-app/status', async (c) => {
     } else {
       appInfo = {
         configured: false,
-        mode: 'development'
+        mode: 'development',
+        error: configCheck.error
       }
     }
 
     const duration = timer.end()
     logger.info('api', 'GitHub App status checked', {
-      configured: hasCredentials,
+      configured: configCheck.configured,
       duration
     })
 
