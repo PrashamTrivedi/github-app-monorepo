@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { parseRepositoryUrl } from '@github-app/shared';
 import type { GitHubIssue, GitHubRepository } from '@github-app/shared';
 import { IssuesList } from './IssuesList';
@@ -15,22 +15,34 @@ export function Dashboard({ repoUrl, onChangeRepo }: DashboardProps) {
   const [issues, setIssues] = useState<GitHubIssue[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [lastFetchedRepo, setLastFetchedRepo] = useState<string>('');
 
-  const parsedRepo = parseRepositoryUrl(repoUrl);
+  // Memoize parsed repo to prevent unnecessary re-computations
+  const parsedRepo = useMemo(() => parseRepositoryUrl(repoUrl), [repoUrl]);
 
   useEffect(() => {
     if (!parsedRepo) return;
+
+    // Create a unique identifier for the current repository
+    const repoIdentifier = `${parsedRepo.owner}/${parsedRepo.repo}`;
+    
+    // Skip fetching if we already have data for this repository
+    if (lastFetchedRepo === repoIdentifier && repository && !error) {
+      return;
+    }
 
     const fetchData = async () => {
       setIsLoading(true);
       setError('');
 
       try {
-        // Fetch repository information
-        const repoResponse = await fetch(
-          `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/repo/${parsedRepo.owner}/${parsedRepo.repo}`
-        );
+        // Make both API calls in parallel for better performance
+        const [repoResponse, issuesResponse] = await Promise.all([
+          fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/repo/${parsedRepo.owner}/${parsedRepo.repo}`),
+          fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/repo/${parsedRepo.owner}/${parsedRepo.repo}/issues`)
+        ]);
 
+        // Check repository response
         if (!repoResponse.ok) {
           throw new Error('Failed to fetch repository information');
         }
@@ -40,11 +52,7 @@ export function Dashboard({ repoUrl, onChangeRepo }: DashboardProps) {
           setRepository(repoResult.data);
         }
 
-        // Fetch issues
-        const issuesResponse = await fetch(
-          `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/repo/${parsedRepo.owner}/${parsedRepo.repo}/issues`
-        );
-
+        // Check issues response
         if (!issuesResponse.ok) {
           throw new Error('Failed to fetch issues');
         }
@@ -53,15 +61,19 @@ export function Dashboard({ repoUrl, onChangeRepo }: DashboardProps) {
         if (issuesResult.success) {
           setIssues(issuesResult.data);
         }
+
+        // Mark this repository as successfully fetched
+        setLastFetchedRepo(repoIdentifier);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load repository data');
+        setLastFetchedRepo(''); // Reset on error to allow retry
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [parsedRepo]);
+  }, [parsedRepo?.owner, parsedRepo?.repo, lastFetchedRepo, repository, error]); // More specific dependencies to prevent unnecessary re-runs
 
   if (isLoading) {
     return (

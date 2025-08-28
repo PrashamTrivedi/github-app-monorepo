@@ -8,6 +8,7 @@ import { RepositoryManager } from '@/components/RepositoryManager';
 import { Dashboard } from '@/components/Dashboard';
 import { GitOperationsPanel } from '@/components/GitOperationsPanel';
 import { apiClient } from '@/lib/api';
+import { repositoryStorage } from '@/lib/repository-storage';
 import type { GitHubRepository, GitHubAppInstallation } from '@github-app/shared';
 
 type ViewMode = 'installations' | 'repositories' | 'dashboard';
@@ -20,6 +21,12 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Restore selected repository from localStorage on mount
+    const savedRepo = repositoryStorage.load();
+    if (savedRepo) {
+      setSelectedRepository(savedRepo);
+    }
+
     loadInitialData();
   }, []);
 
@@ -34,8 +41,12 @@ export default function HomePage() {
         const installations = response.data as GitHubAppInstallation[];
         setInstallations(installations);
         
-        // If we have installations, show repository manager
-        if (installations.length > 0) {
+        // Check if we have a saved repository that should set us to dashboard view
+        const savedRepo = repositoryStorage.load();
+        if (savedRepo && installations.length > 0) {
+          setSelectedRepository(savedRepo);
+          setCurrentView('dashboard');
+        } else if (installations.length > 0) {
           setCurrentView('repositories');
         }
       } else {
@@ -55,15 +66,21 @@ export default function HomePage() {
 
   const handleRepositorySelect = (repo: GitHubRepository) => {
     setSelectedRepository(repo);
+    // Persist selected repository to localStorage
+    repositoryStorage.save(repo);
     setCurrentView('dashboard');
   };
 
   const handleBackToRepositories = () => {
     setCurrentView('repositories');
+    // Clear selected repository but keep in localStorage for potential restoration
   };
 
   const handleBackToInstallations = () => {
     setCurrentView('installations');
+    // Clear selected repository when going back to installations
+    setSelectedRepository(null);
+    repositoryStorage.clear();
   };
 
   if (isLoading) {
