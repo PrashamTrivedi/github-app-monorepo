@@ -6,11 +6,16 @@ import {
   validateInstallationAccess,
   getAllInstallationsFromGitHub,
   generateAppJWT,
+  getRepositoryDetails,
+  getInstallation,
   type GitHubConfig
 } from '../lib/github-auth.js'
 import {
   getRepositoryByName,
-  checkRepositoryInstallationStatus
+  checkRepositoryInstallationStatus,
+  storeRepository,
+  storeInstallation,
+  getInstallation as getInstallationFromDB
 } from '../lib/database.js'
 import {Logger, PerformanceTimer} from '../lib/logger.js'
 import {
@@ -27,7 +32,7 @@ import {
   NotFoundResponseSchema,
   InternalServerErrorResponseSchema,
 } from '../schemas/common.js'
-import type { Env } from '../types.js'
+import type {Env} from '../types.js'
 
 // Simple response helper since we can't import from shared
 function createApiResponse<T>(success: boolean, data?: T | null, error?: string) {
@@ -35,25 +40,26 @@ function createApiResponse<T>(success: boolean, data?: T | null, error?: string)
 }
 
 // Helper to check if GitHub config is available
-async function checkGitHubConfig(env: Env): Promise<{ configured: boolean, config?: GitHubConfig, error?: string }> {
+async function checkGitHubConfig(env: Env): Promise<{configured: boolean, config?: GitHubConfig, error?: string}> {
   try {
     if (!env.GITHUB_CONFIG) {
-      return { configured: false, error: 'GITHUB_CONFIG KV namespace not configured' };
+      return {configured: false, error: 'GITHUB_CONFIG KV namespace not configured'}
     }
-    
-    const configJson = await env.GITHUB_CONFIG.get('github_config');
+    const keys = await env.GITHUB_CONFIG.list()
+    console.log({keys})
+    const configJson = await env.GITHUB_CONFIG.get('github_config')
     if (!configJson) {
-      return { configured: false, error: 'GitHub config not found in KV Store' };
+      return {configured: false, error: 'GitHub config not found in KV Store'}
     }
-    
-    const config = JSON.parse(configJson) as GitHubConfig;
+
+    const config = JSON.parse(configJson) as GitHubConfig
     if (!config.app_id || !config.private_key || !config.webhook_secret) {
-      return { configured: false, error: 'GitHub config missing required fields' };
+      return {configured: false, error: 'GitHub config missing required fields'}
     }
-    
-    return { configured: true, config };
+
+    return {configured: true, config}
   } catch (error) {
-    return { configured: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    return {configured: false, error: error instanceof Error ? error.message : 'Unknown error'}
   }
 }
 
@@ -64,11 +70,96 @@ function parseRepositoryUrl(url: string) {
   return {owner: match[1], repo: match[2].replace(/\.git$/, '')}
 }
 
+// Sync repository from GitHub to database
+async function syncRepositoryToDatabase(
+  owner: string,
+  repo: string,
+  installationId: number,
+  env: Env
+): Promise<{id: number; installation_id: number; name: string; full_name: string; owner_login: string; private: boolean; clone_url: string; created_at: string}> {
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
+  logger.info('api', 'Starting repository sync to database', {
+    owner,
+    repo,
+    installationId,
+    fullName: `${owner}/${repo}`
+  })
+
+  try {
+    // First, ensure the installation exists in database
+    let installation = await getInstallationFromDB(env.DB, installationId)
+    
+    if (!installation) {
+      logger.info('api', 'Installation not found in database, syncing installation first', {
+        installationId,
+        owner,
+        repo
+      })
+
+      try {
+        // Fetch installation details from GitHub API
+        const installationData = await getInstallation(installationId, env)
+        
+        // Store installation in database
+        await storeInstallation(env.DB, installationData)
+        
+        logger.info('api', 'Installation synced to database successfully', {
+          installationId,
+          accountLogin: installationData.account.login
+        })
+      } catch (installationError) {
+        logger.error('api', 'Failed to sync installation to database', {
+          installationId,
+          error: installationError instanceof Error ? installationError.message : String(installationError)
+        })
+        throw new Error(`Failed to sync installation: ${installationError instanceof Error ? installationError.message : 'Unknown error'}`)
+      }
+    }
+
+    // Fetch repository details from GitHub API
+    const repositoryDetails = await getRepositoryDetails(owner, repo, installationId, env)
+
+    // Store repository in database
+    await storeRepository(env.DB, installationId, repositoryDetails)
+
+    // Get the stored repository from database to return consistent data
+    const storedRepository = await getRepositoryByName(env.DB, repositoryDetails.full_name)
+    
+    if (!storedRepository) {
+      throw new Error('Repository was stored but could not be retrieved from database')
+    }
+
+    const duration = timer.end()
+    logger.info('api', 'Successfully synced repository to database', {
+      owner,
+      repo,
+      installationId,
+      repositoryId: storedRepository.id,
+      fullName: storedRepository.full_name,
+      duration
+    })
+
+    return storedRepository
+  } catch (error) {
+    const duration = timer.end()
+    logger.error('api', 'Failed to sync repository to database', {
+      owner,
+      repo,
+      installationId,
+      duration,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    throw new Error(`Failed to sync repository: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
+}
+
 export const apiRoutes = new OpenAPIHono<{Bindings: Env}>()
 
 // Debug endpoint to check environment variables
 apiRoutes.get('/debug/env', async (c) => {
-  const configCheck = await checkGitHubConfig(c.env);
+  const configCheck = await checkGitHubConfig(c.env)
   return c.json({
     hasGitHubConfig: configCheck.configured,
     gitHubAppId: configCheck.config?.app_id || null,
@@ -108,8 +199,8 @@ apiRoutes.openapi(
   async (c) => {
     const logger = new Logger(c.env)
     const timer = new PerformanceTimer()
-    const configCheck = await checkGitHubConfig(c.env);
-
+    const configCheck = await checkGitHubConfig(c.env)
+    console.log({configCheck})
     logger.info('api', 'Fetching installations', {
       envVars: Object.keys(c.env),
       hasGitHubConfig: configCheck.configured,
@@ -128,20 +219,12 @@ apiRoutes.openapi(
         logger.info('api', 'Successfully fetched installations from GitHub API', {
           installationCount: githubResult.installations.length,
           duration: totalDuration,
+          repos: githubResult.installations.flatMap(installation => installation.repositories?.map(repo => repo.full_name)),
           source: 'github_api'
         })
         return c.json(createApiResponse(true, githubResult.installations))
       }
 
-      if (githubResult.source === 'mock') {
-        const totalDuration = timer.end()
-        logger.info('api', 'Using mock installations for development', {
-          installationCount: githubResult.installations.length,
-          duration: totalDuration,
-          source: 'mock_data'
-        })
-        return c.json(createApiResponse(true, githubResult.installations))
-      }
 
       if (githubResult.error) {
         logger.warn('api', 'GitHub API failed, falling back to database', {
@@ -234,7 +317,7 @@ apiRoutes.openapi(
 
       // Get repository from database to find installation ID
       const dbTimer = new PerformanceTimer()
-      const dbRepository = await getRepositoryByName(c.env.DB, fullName)
+      let dbRepository = await getRepositoryByName(c.env.DB, fullName)
       const dbDuration = dbTimer.end()
 
       logger.logDatabaseOperation('SELECT repository by name', 'repositories', dbDuration, {
@@ -247,7 +330,7 @@ apiRoutes.openapi(
         logger.debug('api', 'Repository not in database, checking GitHub installation status')
 
         const installationCheck = await checkRepositoryInstallation(owner, repo, c.env)
-
+        logger.debug('api', 'installation response', installationCheck)
         if (!installationCheck.isInstalled) {
           const duration = timer.end()
           logger.warn('api', 'GitHub App not installed on repository', {
@@ -267,20 +350,44 @@ apiRoutes.openapi(
           )
         }
 
-        const duration = timer.end()
-        logger.warn('api', 'Repository found on GitHub but not synced to database', {
+        logger.info('api', 'Repository found on GitHub but not synced, starting sync', {
           fullName,
-          installationId: installationCheck.installationId,
-          duration
+          installationId: installationCheck.installationId
         })
-        return c.json(
-          createApiResponse(
-            false,
-            null,
-            'Repository not synced. Please trigger a webhook or refresh installation.'
-          ),
-          404
-        )
+
+        try {
+          // Sync repository to database
+          dbRepository = await syncRepositoryToDatabase(
+            owner,
+            repo,
+            installationCheck.installationId!,
+            c.env
+          )
+
+          logger.info('api', 'Repository successfully synced, continuing with request', {
+            fullName,
+            repositoryId: dbRepository.id,
+            installationId: dbRepository.installation_id
+          })
+        } catch (syncError) {
+          const duration = timer.end()
+          logger.error('api', 'Failed to sync repository to database', {
+            owner,
+            repo,
+            fullName,
+            installationId: installationCheck.installationId,
+            duration,
+            error: syncError instanceof Error ? syncError.message : String(syncError)
+          })
+          return c.json(
+            createApiResponse(
+              false,
+              null,
+              `Failed to sync repository: ${syncError instanceof Error ? syncError.message : 'Unknown error'}`
+            ),
+            500
+          )
+        }
       }
 
       logger.debug('api', 'Found repository in database', {
@@ -482,7 +589,7 @@ apiRoutes.openapi(
 
       // Get repository from database to find installation ID
       const dbTimer = new PerformanceTimer()
-      const dbRepository = await getRepositoryByName(c.env.DB, fullName)
+      let dbRepository = await getRepositoryByName(c.env.DB, fullName)
       const dbDuration = dbTimer.end()
 
       logger.logDatabaseOperation('SELECT repository by name', 'repositories', dbDuration, {
@@ -515,20 +622,44 @@ apiRoutes.openapi(
           )
         }
 
-        const duration = timer.end()
-        logger.warn('api', 'Repository found on GitHub but not synced to database', {
+        logger.info('api', 'Repository found on GitHub but not synced, starting sync for issues endpoint', {
           fullName,
-          installationId: installationCheck.installationId,
-          duration
+          installationId: installationCheck.installationId
         })
-        return c.json(
-          createApiResponse(
-            false,
-            null,
-            'Repository not synced. Please trigger a webhook or refresh installation.'
-          ),
-          404
-        )
+
+        try {
+          // Sync repository to database
+          dbRepository = await syncRepositoryToDatabase(
+            owner,
+            repo,
+            installationCheck.installationId!,
+            c.env
+          )
+
+          logger.info('api', 'Repository successfully synced for issues endpoint, continuing with request', {
+            fullName,
+            repositoryId: dbRepository.id,
+            installationId: dbRepository.installation_id
+          })
+        } catch (syncError) {
+          const duration = timer.end()
+          logger.error('api', 'Failed to sync repository to database for issues endpoint', {
+            owner,
+            repo,
+            fullName,
+            installationId: installationCheck.installationId,
+            duration,
+            error: syncError instanceof Error ? syncError.message : String(syncError)
+          })
+          return c.json(
+            createApiResponse(
+              false,
+              null,
+              `Failed to sync repository: ${syncError instanceof Error ? syncError.message : 'Unknown error'}`
+            ),
+            500
+          )
+        }
       }
 
       // Generate installation token
@@ -784,7 +915,7 @@ apiRoutes.get('/installation/callback', async (c) => {
       return c.json(createApiResponse(false, null, 'Missing installation_id parameter'), 400)
     }
 
-    const configCheck = await checkGitHubConfig(c.env);
+    const configCheck = await checkGitHubConfig(c.env)
     if (!configCheck.configured) {
       const duration = timer.end()
       logger.warn('api', 'GitHub App not configured for installation callback', {
@@ -868,7 +999,7 @@ apiRoutes.get('/github-app/status', async (c) => {
   const timer = new PerformanceTimer()
 
   try {
-    const configCheck = await checkGitHubConfig(c.env);
+    const configCheck = await checkGitHubConfig(c.env)
 
     let appInfo = null
     if (configCheck.configured && configCheck.config) {

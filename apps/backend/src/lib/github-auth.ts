@@ -1,85 +1,85 @@
-import jwt from 'jsonwebtoken';
-import type { Env } from '../types.js';
-import { Logger, PerformanceTimer } from './logger.js';
+import jwt from 'jsonwebtoken'
+import type {Env} from '../types.js'
+import {Logger, PerformanceTimer} from './logger.js'
 
 export interface GitHubInstallation {
-  id: number;
+  id: number
   account: {
-    id: number;
-    login: string;
-    type: 'User' | 'Organization';
-  };
-  permissions: Record<string, string>;
+    id: number
+    login: string
+    type: 'User' | 'Organization'
+  }
+  permissions: Record<string, string>
   repositories?: Array<{
-    id: number;
-    name: string;
-    full_name: string;
+    id: number
+    name: string
+    full_name: string
     owner: {
-      login: string;
-    };
-    private: boolean;
-    clone_url: string;
-  }>;
+      login: string
+    }
+    private: boolean
+    clone_url: string
+  }>
 }
 
 export interface InstallationToken {
-  token: string;
-  expires_at: string;
+  token: string
+  expires_at: string
 }
 
 export interface GitHubConfig {
-  app_id: string;
-  private_key: string;
-  webhook_secret: string;
+  app_id: string
+  private_key: string
+  webhook_secret: string
 }
 
 /**
  * Load GitHub configuration from KV Store
  */
 async function loadGitHubConfig(env: Env): Promise<GitHubConfig> {
-  const logger = new Logger(env);
-  
+  const logger = new Logger(env)
+
   try {
     if (!env.GITHUB_CONFIG) {
       logger.error('github-auth', 'GITHUB_CONFIG KV namespace not configured', {
         environment: env.ENVIRONMENT
-      });
-      throw new Error('GITHUB_CONFIG KV namespace is required');
+      })
+      throw new Error('GITHUB_CONFIG KV namespace is required')
     }
 
-    const configJson = await env.GITHUB_CONFIG.get('github_config');
+    const configJson = await env.GITHUB_CONFIG.get('github_config')
     if (!configJson) {
       logger.error('github-auth', 'GitHub config not found in KV Store', {
         key: 'github_config',
         environment: env.ENVIRONMENT
-      });
-      throw new Error('GitHub configuration not found in KV Store - use setup script to configure');
+      })
+      throw new Error('GitHub configuration not found in KV Store - use setup script to configure')
     }
 
-    const config = JSON.parse(configJson) as GitHubConfig;
-    
+    const config = JSON.parse(configJson) as GitHubConfig
+
     // Validate required fields
     if (!config.app_id || !config.private_key || !config.webhook_secret) {
       logger.error('github-auth', 'Invalid GitHub config structure', {
         hasAppId: !!config.app_id,
         hasPrivateKey: !!config.private_key,
         hasWebhookSecret: !!config.webhook_secret
-      });
-      throw new Error('GitHub configuration is missing required fields (app_id, private_key, webhook_secret)');
+      })
+      throw new Error('GitHub configuration is missing required fields (app_id, private_key, webhook_secret)')
     }
 
     logger.debug('github-auth', 'Successfully loaded GitHub config from KV', {
       appId: config.app_id,
       privateKeyLength: config.private_key.length,
       hasWebhookSecret: !!config.webhook_secret
-    });
+    })
 
-    return config;
+    return config
   } catch (error) {
     logger.error('github-auth', 'Error loading GitHub config from KV', {
       error: error instanceof Error ? error.message : String(error)
-    });
-    throw error;
+    })
+    throw error
   }
 }
 
@@ -87,50 +87,50 @@ async function loadGitHubConfig(env: Env): Promise<GitHubConfig> {
  * Generate a GitHub App JWT token for authentication
  */
 export async function generateAppJWT(env: Env): Promise<string> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   try {
-    const config = await loadGitHubConfig(env);
-    
+    const config = await loadGitHubConfig(env)
+
     logger.debug('github-auth', 'Generating GitHub App JWT', {
       appId: config.app_id
-    });
+    })
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(Date.now() / 1000)
     const payload = {
       iat: now - 60, // Issued at time (allow 60 seconds of clock skew)
       exp: now + (10 * 60), // JWT expires in 10 minutes
       iss: config.app_id // GitHub App ID
-    };
-    
+    }
+
     // Clean up private key format
-    let privateKey = config.private_key.replace(/\\n/g, '\n');
-    
+    let privateKey = config.private_key.replace(/\\n/g, '\n')
+
     logger.info('github-auth', 'Private key loaded successfully', {
       source: 'kv',
       keyLength: privateKey.length,
       startsWithBegin: privateKey.startsWith('-----BEGIN'),
       endsWithEnd: privateKey.endsWith('-----'),
       environment: env.ENVIRONMENT
-    });
-    
-    const jwt_token = jwt.sign(payload, privateKey, { 
-      algorithm: 'RS256' 
-    });
+    })
 
-    const duration = timer.end();
+    const jwt_token = jwt.sign(payload, privateKey, {
+      algorithm: 'RS256'
+    })
+
+    const duration = timer.end()
     logger.logAuthEvent('jwt_generation', true, undefined, duration, {
       appId: config.app_id
-    });
+    })
 
-    return jwt_token;
+    return jwt_token
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.logAuthEvent('jwt_generation', false, undefined, duration, {
       error: error instanceof Error ? error.message : String(error)
-    });
-    throw error;
+    })
+    throw error
   }
 }
 
@@ -138,75 +138,75 @@ export async function generateAppJWT(env: Env): Promise<string> {
  * Generate an installation access token for a specific installation
  */
 export async function generateInstallationToken(
-  installationId: number, 
+  installationId: number,
   env: Env
 ): Promise<InstallationToken> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   logger.debug('github-auth', 'Generating installation token', {
     installationId
-  });
+  })
 
   // Ensure GitHub config is available
   try {
-    await loadGitHubConfig(env);
+    await loadGitHubConfig(env)
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'GitHub App configuration not available', {
       installationId,
       environment: env.ENVIRONMENT,
       error: error instanceof Error ? error.message : String(error)
-    });
-    logger.logAuthEvent('installation_token_error', false, installationId, duration);
-    throw new Error('GitHub App configuration not available in KV Store');
+    })
+    logger.logAuthEvent('installation_token_error', false, installationId, duration)
+    throw new Error('GitHub App configuration not available in KV Store')
   }
 
   // Check cache first (if available)
-  const cacheKey = `install_token_${installationId}`;
-  let cached = null;
+  const cacheKey = `install_token_${installationId}`
+  let cached = null
   if (env.TOKEN_CACHE) {
     try {
-      cached = await env.TOKEN_CACHE.get(cacheKey);
+      cached = await env.TOKEN_CACHE.get(cacheKey)
       if (cached) {
         logger.debug('github-auth', 'Found cached installation token', {
           installationId,
           cacheKey
-        });
+        })
       }
     } catch (error) {
       logger.warn('github-auth', 'Token cache not available', {
         installationId,
         error: error instanceof Error ? error.message : String(error)
-      });
+      })
     }
   }
-  
+
   if (cached) {
-    const token = JSON.parse(cached) as InstallationToken;
+    const token = JSON.parse(cached) as InstallationToken
     // Check if token expires in more than 5 minutes
-    const expiresAt = new Date(token.expires_at).getTime();
-    const fiveMinutesFromNow = Date.now() + (5 * 60 * 1000);
-    
+    const expiresAt = new Date(token.expires_at).getTime()
+    const fiveMinutesFromNow = Date.now() + (5 * 60 * 1000)
+
     if (expiresAt > fiveMinutesFromNow) {
-      const duration = timer.end();
+      const duration = timer.end()
       logger.logAuthEvent('installation_token_cache_hit', true, installationId, duration, {
         expiresAt: token.expires_at
-      });
-      return token;
+      })
+      return token
     } else {
       logger.debug('github-auth', 'Cached token expired, generating new one', {
         installationId,
         expiresAt: token.expires_at
-      });
+      })
     }
   }
-  
+
   try {
-    const appJWT = await generateAppJWT(env);
-    const apiTimer = new PerformanceTimer();
-    
-    const endpoint = `https://api.github.com/app/installations/${installationId}/access_tokens`;
+    const appJWT = await generateAppJWT(env)
+    const apiTimer = new PerformanceTimer()
+
+    const endpoint = `https://api.github.com/app/installations/${installationId}/access_tokens`
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -214,67 +214,67 @@ export async function generateInstallationToken(
         'Accept': 'application/vnd.github.v3+json',
         'User-Agent': 'GitHub-App-Backend/1.0'
       }
-    });
-    
-    const apiDuration = apiTimer.end();
+    })
+
+    const apiDuration = apiTimer.end()
     logger.logGitHubAPICall(endpoint, 'POST', response.status, apiDuration, {
       installationId,
       operation: 'generate_installation_token'
-    });
-    
+    })
+
     if (!response.ok) {
-      const error = await response.text();
-      const duration = timer.end();
+      const error = await response.text()
+      const duration = timer.end()
       logger.logAuthEvent('installation_token_error', false, installationId, duration, {
         status: response.status,
         error
-      });
-      throw new Error(`Failed to generate installation token: ${response.status} ${error}`);
+      })
+      throw new Error(`Failed to generate installation token: ${response.status} ${error}`)
     }
-    
-    const data = await response.json() as InstallationToken;
-    
+
+    const data = await response.json() as InstallationToken
+
     // Cache the token (expires in 1 hour, so cache for 55 minutes)
     if (env.TOKEN_CACHE) {
       try {
-        await env.TOKEN_CACHE.put(cacheKey, JSON.stringify(data), { 
-          expirationTtl: 55 * 60 
-        });
+        await env.TOKEN_CACHE.put(cacheKey, JSON.stringify(data), {
+          expirationTtl: 55 * 60
+        })
         logger.debug('github-auth', 'Cached installation token', {
           installationId,
           cacheKey,
           expiresAt: data.expires_at
-        });
+        })
       } catch (error) {
         logger.warn('github-auth', 'Failed to cache token', {
           installationId,
           error: error instanceof Error ? error.message : String(error)
-        });
+        })
       }
     }
-    
-    const duration = timer.end();
+
+    const duration = timer.end()
     logger.logAuthEvent('installation_token_success', true, installationId, duration, {
       expiresAt: data.expires_at
-    });
-    
-    return data;
+    })
+
+    return data
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.logAuthEvent('installation_token_fallback', false, installationId, duration, {
       error: error instanceof Error ? error.message : String(error)
-    });
-    
+    })
+
     logger.error('github-auth', 'Error generating installation token, falling back to mock', {
       installationId,
       error: error instanceof Error ? error.message : String(error)
-    });
-    
+    })
+
     // Fallback to mock token for development
     return {
       token: 'mock-github-token-for-development',
       expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-    };
+    }
   }
 }
 
@@ -285,56 +285,56 @@ export async function getInstallation(
   installationId: number,
   env: Env
 ): Promise<GitHubInstallation> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   logger.debug('github-auth', 'Getting installation details', {
     installationId
-  });
-  
+  })
+
   try {
-    const appJWT = await generateAppJWT(env);
-    
-    const endpoint = `https://api.github.com/app/installations/${installationId}`;
+    const appJWT = await generateAppJWT(env)
+
+    const endpoint = `https://api.github.com/app/installations/${installationId}`
     const response = await fetch(endpoint, {
       headers: {
         'Authorization': `Bearer ${appJWT}`,
         'Accept': 'application/vnd.github.v3+json',
         'User-Agent': 'GitHub-App-Backend/1.0'
       }
-    });
-    
-    const duration = timer.end();
+    })
+
+    const duration = timer.end()
     logger.logGitHubAPICall(endpoint, 'GET', response.status, duration, {
       installationId,
       operation: 'get_installation'
-    });
-    
+    })
+
     if (!response.ok) {
-      const error = await response.text();
+      const error = await response.text()
       logger.error('github-auth', 'Failed to get installation', {
         installationId,
         status: response.status,
         error
-      });
-      throw new Error(`Failed to get installation: ${response.status} ${error}`);
+      })
+      throw new Error(`Failed to get installation: ${response.status} ${error}`)
     }
-    
-    const installation = await response.json() as GitHubInstallation;
+
+    const installation = await response.json() as GitHubInstallation
     logger.info('github-auth', 'Successfully retrieved installation details', {
       installationId,
       accountLogin: installation.account?.login
-    });
-    
-    return installation;
+    })
+
+    return installation
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'Error getting installation', {
       installationId,
       duration,
       error: error instanceof Error ? error.message : String(error)
-    });
-    throw error;
+    })
+    throw error
   }
 }
 
@@ -345,73 +345,75 @@ export async function getInstallationRepositories(
   installationId: number,
   env: Env
 ): Promise<Array<{
-  id: number;
-  name: string;
-  full_name: string;
-  owner: { login: string };
-  private: boolean;
-  clone_url: string;
+  id: number
+  name: string
+  full_name: string
+  owner: {login: string}
+  private: boolean
+  clone_url: string
 }>> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   logger.debug('github-auth', 'Getting installation repositories', {
     installationId
-  });
-  
+  })
+
   try {
-    const tokenData = await generateInstallationToken(installationId, env);
-    
-    const endpoint = 'https://api.github.com/installation/repositories';
+    const tokenData = await generateInstallationToken(installationId, env)
+
+    const endpoint = 'https://api.github.com/installation/repositories'
     const response = await fetch(endpoint, {
       headers: {
         'Authorization': `Bearer ${tokenData.token}`,
         'Accept': 'application/vnd.github.v3+json',
         'User-Agent': 'GitHub-App-Backend/1.0'
       }
-    });
-    
-    const duration = timer.end();
+    })
+
+    const duration = timer.end()
     logger.logGitHubAPICall(endpoint, 'GET', response.status, duration, {
       installationId,
       operation: 'get_installation_repositories'
-    });
-    
+    })
+
     if (!response.ok) {
-      const error = await response.text();
+      const error = await response.text()
       logger.error('github-auth', 'Failed to get repositories', {
         installationId,
         status: response.status,
         error
-      });
-      throw new Error(`Failed to get repositories: ${response.status} ${error}`);
+      })
+      throw new Error(`Failed to get repositories: ${response.status} ${error}`)
     }
-    
-    const data = await response.json() as { repositories: Array<{
-      id: number;
-      name: string;
-      full_name: string;
-      owner: { login: string };
-      private: boolean;
-      clone_url: string;
-    }> };
-    
-    const repositories = data.repositories || [];
+
+    const data = await response.json() as {
+      repositories: Array<{
+        id: number
+        name: string
+        full_name: string
+        owner: {login: string}
+        private: boolean
+        clone_url: string
+      }>
+    }
+
+    const repositories = data.repositories || []
     logger.info('github-auth', 'Successfully retrieved installation repositories', {
       installationId,
       repositoryCount: repositories.length,
       repositories: repositories.map(r => r.full_name)
-    });
-    
-    return repositories;
+    })
+
+    return repositories
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'Error getting installation repositories', {
       installationId,
       duration,
       error: error instanceof Error ? error.message : String(error)
-    });
-    throw error;
+    })
+    throw error
   }
 }
 
@@ -423,122 +425,121 @@ export async function checkRepositoryInstallation(
   repo: string,
   env: Env
 ): Promise<{
-  isInstalled: boolean;
-  installationId?: number;
-  error?: string;
+  isInstalled: boolean
+  installationId?: number
+  error?: string
 }> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   logger.debug('github-auth', 'Checking repository installation status', {
     owner,
     repo,
     fullName: `${owner}/${repo}`
-  });
-  
+  })
+
   try {
     // Check if GitHub config is available
     try {
-      await loadGitHubConfig(env);
+      await loadGitHubConfig(env)
     } catch (error) {
-      const duration = timer.end();
+      const duration = timer.end()
       logger.error('github-auth', 'GitHub App configuration not available', {
         owner,
         repo,
         environment: env.ENVIRONMENT,
         duration,
         error: error instanceof Error ? error.message : String(error)
-      });
+      })
       return {
         isInstalled: false,
         error: 'GitHub App configuration not available in KV Store'
-      };
+      }
     }
 
-    const appJWT = await generateAppJWT(env);
-    
+    const appJWT = await generateAppJWT(env)
+
     // Get all installations and check if the repository is accessible
-    const endpoint = 'https://api.github.com/app/installations';
+    const endpoint = 'https://api.github.com/app/installations'
     const response = await fetch(endpoint, {
       headers: {
         'Authorization': `Bearer ${appJWT}`,
         'Accept': 'application/vnd.github.v3+json',
         'User-Agent': 'GitHub-App-Backend/1.0'
       }
-    });
-    
-    const duration = timer.end();
+    })
+
+    const duration = timer.end()
     logger.logGitHubAPICall(endpoint, 'GET', response.status, duration, {
       owner,
       repo,
       operation: 'check_repository_installation'
-    });
-    
+    })
+
     if (!response.ok) {
-      const error = await response.text();
+      const error = await response.text()
       logger.error('github-auth', 'Failed to fetch installations for repository check', {
         owner,
         repo,
         status: response.status,
         error
-      });
+      })
       return {
         isInstalled: false,
         error: `GitHub API error: ${response.status}`
-      };
+      }
     }
-    
-    const installations = await response.json() as GitHubInstallation[];
-    
+
+    const installations = await response.json() as GitHubInstallation[]
     // Check each installation to see if it has access to the repository
     for (const installation of installations) {
       try {
-        const repositories = await getInstallationRepositories(installation.id, env);
-        const targetRepo = repositories.find(r => r.full_name === `${owner}/${repo}`);
-        
+        const repositories = await getInstallationRepositories(installation.id, env)
+        const targetRepo = repositories.find(r => r.full_name === `${owner}/${repo}`)
+
         if (targetRepo) {
-          logger.info('github-auth', 'Found repository in installation', {
+          logger.info('github-auth-repo-found', 'Found repository in installation', {
             owner,
             repo,
             installationId: installation.id,
             accountLogin: installation.account.login
-          });
+          })
           return {
             isInstalled: true,
             installationId: installation.id
-          };
+          }
         }
       } catch (error) {
         logger.warn('github-auth', 'Error checking installation repositories', {
           installationId: installation.id,
           error: error instanceof Error ? error.message : String(error)
-        });
-        continue; // Try next installation
+        })
+        continue // Try next installation
       }
     }
-    
+
     logger.info('github-auth', 'Repository not found in any installation', {
       owner,
       repo,
       installationsChecked: installations.length
-    });
-    
+    })
+
     return {
       isInstalled: false,
       error: 'GitHub App not installed on this repository'
-    };
+    }
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'Error checking repository installation', {
       owner,
       repo,
       duration,
       error: error instanceof Error ? error.message : String(error)
-    });
+    })
     return {
       isInstalled: false,
       error: error instanceof Error ? error.message : 'Unknown error checking installation'
-    };
+    }
   }
 }
 
@@ -551,22 +552,22 @@ export async function validateInstallationAccess(
   repo: string,
   env: Env
 ): Promise<{
-  hasAccess: boolean;
-  error?: string;
+  hasAccess: boolean
+  error?: string
 }> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   logger.debug('github-auth', 'Validating installation access to repository', {
     installationId,
     owner,
     repo
-  });
-  
+  })
+
   try {
     // Check if GitHub config is available
     try {
-      await loadGitHubConfig(env);
+      await loadGitHubConfig(env)
     } catch (error) {
       logger.warn('github-auth', 'GitHub configuration not available, assuming access for development', {
         installationId,
@@ -574,15 +575,15 @@ export async function validateInstallationAccess(
         repo,
         environment: env.ENVIRONMENT,
         error: error instanceof Error ? error.message : String(error)
-      });
-      return { hasAccess: true };
+      })
+      return {hasAccess: true}
     }
 
-    const repositories = await getInstallationRepositories(installationId, env);
-    const targetRepo = repositories.find(r => r.full_name === `${owner}/${repo}`);
-    
-    const duration = timer.end();
-    
+    const repositories = await getInstallationRepositories(installationId, env)
+    const targetRepo = repositories.find(r => r.full_name === `${owner}/${repo}`)
+
+    const duration = timer.end()
+
     if (targetRepo) {
       logger.info('github-auth', 'Installation has access to repository', {
         installationId,
@@ -590,35 +591,35 @@ export async function validateInstallationAccess(
         repo,
         repositoryId: targetRepo.id,
         duration
-      });
-      return { hasAccess: true };
+      })
+      return {hasAccess: true}
     } else {
-      
+
       logger.warn('github-auth', 'Installation does not have access to repository', {
         installationId,
         owner,
         repo,
         availableRepos: repositories.map(r => r.full_name),
         duration
-      });
+      })
       return {
         hasAccess: false,
         error: 'Installation does not have access to this repository'
-      };
+      }
     }
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'Error validating installation access', {
       installationId,
       owner,
       repo,
       duration,
       error: error instanceof Error ? error.message : String(error)
-    });
+    })
     return {
       hasAccess: false,
       error: error instanceof Error ? error.message : 'Error validating access'
-    };
+    }
   }
 }
 
@@ -628,88 +629,197 @@ export async function validateInstallationAccess(
 export async function getAllInstallationsFromGitHub(
   env: Env
 ): Promise<{
-  installations: GitHubInstallation[];
-  source: 'github' | 'database' | 'mock';
-  error?: string;
+  installations: GitHubInstallation[]
+  source: 'github' | 'database' | 'mock'
+  error?: string
 }> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
-  logger.debug('github-auth', 'Fetching all installations from GitHub');
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
+  logger.debug('github-auth', 'Fetching all installations from GitHub')
+
   // Ensure GitHub configuration is available
   try {
-    await loadGitHubConfig(env);
+    await loadGitHubConfig(env)
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'GitHub App configuration not available', {
       environment: env.ENVIRONMENT,
       duration,
       error: error instanceof Error ? error.message : String(error)
-    });
+    })
     return {
       installations: [],
       source: 'github',
       error: 'GitHub App configuration not available in KV Store'
-    };
+    }
   }
-  
+
   try {
-    const appJWT = await generateAppJWT(env);
-    const apiTimer = new PerformanceTimer();
-    
-    const endpoint = 'https://api.github.com/app/installations';
+    const appJWT = await generateAppJWT(env)
+    const apiTimer = new PerformanceTimer()
+
+    const endpoint = 'https://api.github.com/app/installations'
     const response = await fetch(endpoint, {
       headers: {
         'Authorization': `Bearer ${appJWT}`,
         'Accept': 'application/vnd.github.v3+json',
         'User-Agent': 'GitHub-App-Backend/1.0'
       }
-    });
-    
-    const apiDuration = apiTimer.end();
+    })
+
+    const apiDuration = apiTimer.end()
     logger.logGitHubAPICall(endpoint, 'GET', response.status, apiDuration, {
       operation: 'get_all_installations_enhanced'
-    });
-    
+    })
+
     if (!response.ok) {
-      const error = await response.text();
-      const duration = timer.end();
+      const error = await response.text()
+      const duration = timer.end()
       logger.error('github-auth', 'GitHub API error fetching installations', {
         status: response.status,
         error,
         duration
-      });
+      })
       return {
         installations: [],
         source: 'github',
         error: `GitHub API error: ${response.status} - ${error}`
-      };
+      }
     }
-    
-    const installations = await response.json() as GitHubInstallation[];
-    const duration = timer.end();
-    
+
+    const installations = await response.json() as GitHubInstallation[]
+    const duration = timer.end()
+
     logger.info('github-auth', 'Successfully fetched installations from GitHub', {
       installationCount: installations.length,
       duration
-    });
-    
+    })
+
     return {
       installations,
       source: 'github'
-    };
+    }
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.error('github-auth', 'Error fetching installations from GitHub', {
       duration,
       error: error instanceof Error ? error.message : String(error)
-    });
+    })
     return {
       installations: [],
       source: 'github',
       error: error instanceof Error ? error.message : 'Unknown error'
-    };
+    }
+  }
+}
+
+/**
+ * Get repository details from GitHub API for a specific repository
+ */
+export async function getRepositoryDetails(
+  owner: string,
+  repo: string,
+  installationId: number,
+  env: Env
+): Promise<{
+  id: number
+  name: string
+  full_name: string
+  owner: {login: string}
+  private: boolean
+  clone_url: string
+}> {
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
+  logger.debug('github-auth', 'Getting repository details', {
+    owner,
+    repo,
+    installationId,
+    fullName: `${owner}/${repo}`
+  })
+
+  try {
+    const tokenData = await generateInstallationToken(installationId, env)
+
+    const endpoint = `https://api.github.com/repos/${owner}/${repo}`
+    const response = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${tokenData.token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'GitHub-App-Backend/1.0'
+      }
+    })
+
+    const duration = timer.end()
+    logger.logGitHubAPICall(endpoint, 'GET', response.status, duration, {
+      owner,
+      repo,
+      installationId,
+      operation: 'get_repository_details'
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      logger.error('github-auth', 'Failed to fetch repository details', {
+        owner,
+        repo,
+        installationId,
+        status: response.status,
+        error
+      })
+      throw new Error(`GitHub API error: ${response.status} - ${error}`)
+    }
+
+    const repositoryData = await response.json() as any
+    
+    // Validate required fields
+    if (!repositoryData.id || !repositoryData.name || !repositoryData.full_name || 
+        !repositoryData.owner || !repositoryData.owner.login || 
+        typeof repositoryData.private !== 'boolean' || !repositoryData.clone_url) {
+      logger.error('github-auth', 'Invalid repository data received from GitHub API', {
+        owner,
+        repo,
+        installationId,
+        hasId: !!repositoryData.id,
+        hasName: !!repositoryData.name,
+        hasFullName: !!repositoryData.full_name,
+        hasOwner: !!repositoryData.owner,
+        hasOwnerLogin: !!(repositoryData.owner && repositoryData.owner.login),
+        hasPrivateField: typeof repositoryData.private === 'boolean',
+        hasCloneUrl: !!repositoryData.clone_url
+      })
+      throw new Error('Invalid repository data received from GitHub API')
+    }
+
+    logger.info('github-auth', 'Successfully fetched repository details', {
+      owner,
+      repo,
+      installationId,
+      repositoryId: repositoryData.id,
+      private: repositoryData.private,
+      duration
+    })
+
+    return {
+      id: repositoryData.id,
+      name: repositoryData.name,
+      full_name: repositoryData.full_name,
+      owner: {login: repositoryData.owner.login},
+      private: repositoryData.private,
+      clone_url: repositoryData.clone_url
+    }
+  } catch (error) {
+    const duration = timer.end()
+    logger.error('github-auth', 'Error fetching repository details', {
+      owner,
+      repo,
+      installationId,
+      duration,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    throw error
   }
 }
 
@@ -721,111 +831,111 @@ export async function verifyWebhookSignature(
   signature: string,
   env: Env
 ): Promise<boolean> {
-  const logger = new Logger(env);
-  const timer = new PerformanceTimer();
-  
+  const logger = new Logger(env)
+  const timer = new PerformanceTimer()
+
   try {
     // Load webhook secret from KV Store
-    let secret = '';
+    let secret = ''
     try {
-      const config = await loadGitHubConfig(env);
-      secret = config.webhook_secret;
+      const config = await loadGitHubConfig(env)
+      secret = config.webhook_secret
     } catch (error) {
       logger.warn('webhook-auth', 'No webhook secret available, skipping signature verification (development mode)', {
         environment: env.ENVIRONMENT,
         error: error instanceof Error ? error.message : String(error)
-      });
-      const duration = timer.end();
+      })
+      const duration = timer.end()
       logger.logAuthEvent('webhook_signature_skip', true, undefined, duration, {
         reason: 'no_secret_kv_unavailable'
-      });
-      return true;
+      })
+      return true
     }
-    
+
     // Allow for development mode without webhook secret
     if (!secret) {
       logger.warn('webhook-auth', 'No webhook secret configured, skipping signature verification (development mode)', {
         environment: env.ENVIRONMENT
-      });
-      const duration = timer.end();
+      })
+      const duration = timer.end()
       logger.logAuthEvent('webhook_signature_skip', true, undefined, duration, {
         reason: 'no_secret_development_mode'
-      });
-      return true;
+      })
+      return true
     }
 
     if (!signature) {
       logger.error('webhook-auth', 'No signature provided for webhook verification', {
         hasPayload: !!payload,
         payloadLength: payload.length
-      });
-      const duration = timer.end();
-      logger.logAuthEvent('webhook_signature_missing', false, undefined, duration);
-      return false;
+      })
+      const duration = timer.end()
+      logger.logAuthEvent('webhook_signature_missing', false, undefined, duration)
+      return false
     }
 
     logger.debug('webhook-auth', 'Verifying webhook signature', {
       signatureLength: signature.length,
       payloadLength: payload.length,
       signaturePrefix: signature.substring(0, 10)
-    });
+    })
 
-    const encoder = new TextEncoder();
+    const encoder = new TextEncoder()
     const key = await crypto.subtle.importKey(
       'raw',
       encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
+      {name: 'HMAC', hash: 'SHA-256'},
       false,
       ['sign']
-    );
-    
-    const expectedSignature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+    )
+
+    const expectedSignature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
     const expectedHex = Array.from(new Uint8Array(expectedSignature))
       .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    
-    const expected = `sha256=${expectedHex}`;
-    
+      .join('')
+
+    const expected = `sha256=${expectedHex}`
+
     // Use timing-safe comparison
     if (signature.length !== expected.length) {
-      const duration = timer.end();
+      const duration = timer.end()
       logger.logAuthEvent('webhook_signature_length_mismatch', false, undefined, duration, {
         signatureLength: signature.length,
         expectedLength: expected.length
-      });
-      return false;
+      })
+      return false
     }
-    
-    let result = 0;
+
+    let result = 0
     for (let i = 0; i < signature.length; i++) {
-      result |= signature.charCodeAt(i) ^ expected.charCodeAt(i);
+      result |= signature.charCodeAt(i) ^ expected.charCodeAt(i)
     }
-    
-    const isValid = result === 0;
-    const duration = timer.end();
-    
+
+    const isValid = result === 0
+    const duration = timer.end()
+
     logger.logAuthEvent('webhook_signature_verification', isValid, undefined, duration, {
       signatureValid: isValid
-    });
-    
+    })
+
     if (!isValid) {
       logger.error('webhook-auth', 'Webhook signature verification failed', {
         signaturePrefix: signature.substring(0, 10),
         expectedPrefix: expected.substring(0, 10)
-      });
+      })
     } else {
-      logger.debug('webhook-auth', 'Webhook signature verification successful');
+      logger.debug('webhook-auth', 'Webhook signature verification successful')
     }
-    
-    return isValid;
+
+    return isValid
   } catch (error) {
-    const duration = timer.end();
+    const duration = timer.end()
     logger.logAuthEvent('webhook_signature_error', false, undefined, duration, {
       error: error instanceof Error ? error.message : String(error)
-    });
+    })
     logger.error('webhook-auth', 'Error verifying webhook signature', {
       error: error instanceof Error ? error.message : String(error)
-    });
-    return false;
+    })
+    return false
   }
 }
