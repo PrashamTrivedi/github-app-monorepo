@@ -130,21 +130,7 @@ export async function getAllInstallations(db: D1Database): Promise<Installation[
     return result.results || [];
   } catch (error) {
     console.error('Database error getting installations:', error);
-    // Return mock data for development when database is not available
-    if ((error as any)?.message?.includes('no such table') || (error as any)?.message?.includes('Database')) {
-      return [
-        {
-          id: 12345,
-          account_id: 67890,
-          account_login: 'demo-user',
-          account_type: 'User',
-          permissions: JSON.stringify({ contents: 'read', metadata: 'read' }),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
-      ];
-    }
-    throw error;
+    throw new Error('Database is not available or not properly configured');
   }
 }
 
@@ -173,34 +159,7 @@ export async function getRepositoryByName(
     return result || null;
   } catch (error) {
     console.error('Database error getting repository:', error);
-    // Return mock data for common test repositories when database is not available
-    if ((error as any)?.message?.includes('no such table') || (error as any)?.message?.includes('Database')) {
-      const mockRepos: Record<string, Repository> = {
-        'octocat/Hello-World': {
-          id: 1,
-          installation_id: 12345,
-          name: 'Hello-World',
-          full_name: 'octocat/Hello-World',
-          owner_login: 'octocat',
-          private: false,
-          clone_url: 'https://github.com/octocat/Hello-World.git',
-          created_at: new Date().toISOString()
-        },
-        'demo-user/test-repo': {
-          id: 2,
-          installation_id: 12345,
-          name: 'test-repo',
-          full_name: 'demo-user/test-repo',
-          owner_login: 'demo-user',
-          private: false,
-          clone_url: 'https://github.com/demo-user/test-repo.git',
-          created_at: new Date().toISOString()
-        }
-      };
-      
-      return mockRepos[fullName] || null;
-    }
-    throw error;
+    throw new Error('Database is not available or not properly configured');
   }
 }
 
@@ -374,36 +333,6 @@ export async function checkRepositoryInstallationStatus(
     };
   } catch (error) {
     console.error('Database error checking repository installation status:', error);
-    
-    // Return mock data for development when database is not available
-    if ((error as any)?.message?.includes('no such table') || (error as any)?.message?.includes('Database')) {
-      const mockRepos = ['octocat/Hello-World', 'demo-user/test-repo'];
-      if (mockRepos.includes(fullName)) {
-        return {
-          exists: true,
-          installationId: 12345,
-          repository: {
-            id: mockRepos.indexOf(fullName) + 1,
-            installation_id: 12345,
-            name: fullName.split('/')[1],
-            full_name: fullName,
-            owner_login: fullName.split('/')[0],
-            private: false,
-            clone_url: `https://github.com/${fullName}.git`,
-            created_at: new Date().toISOString()
-          },
-          installation: {
-            id: 12345,
-            account_id: 67890,
-            account_login: 'demo-user',
-            account_type: 'User',
-            permissions: JSON.stringify({ contents: 'read', metadata: 'read' }),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }
-        };
-      }
-    }
-    throw error;
+    throw new Error('Database is not available or not properly configured');
   }
 }

@@ -104,20 +104,17 @@ export async function generateInstallationToken(
     installationId
   });
 
-  // Return mock token for development when GitHub app is not configured
+  // Ensure GitHub app credentials are configured
   if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-    logger.warn('github-auth', 'GitHub App credentials not configured, using mock token for development', {
-      installationId,
-      environment: env.ENVIRONMENT
-    });
-    
     const duration = timer.end();
-    logger.logAuthEvent('installation_token_mock', true, installationId, duration);
-    
-    return {
-      token: 'mock-github-token-for-development',
-      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hour from now
-    };
+    logger.error('github-auth', 'GitHub App credentials not configured', {
+      installationId,
+      environment: env.ENVIRONMENT,
+      hasAppId: !!env.GITHUB_APP_ID,
+      hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
+    });
+    logger.logAuthEvent('installation_token_error', false, installationId, duration);
+    throw new Error('GitHub App credentials (GITHUB_APP_ID and GITHUB_PRIVATE_KEY) are required');
   }
 
   // Check cache first (if available)
@@ -318,41 +315,6 @@ export async function getInstallationRepositories(
   });
   
   try {
-    // Return mock repositories for development when GitHub app is not configured
-    if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-      logger.warn('github-auth', 'GitHub App credentials not configured, using mock repositories for development', {
-        installationId,
-        environment: env.ENVIRONMENT
-      });
-      
-      const duration = timer.end();
-      logger.info('github-auth', 'Returning mock installation repositories', {
-        installationId,
-        repositoryCount: 2,
-        source: 'mock_data',
-        duration
-      });
-      
-      return [
-        {
-          id: 1,
-          name: 'Hello-World',
-          full_name: 'octocat/Hello-World',
-          owner: { login: 'octocat' },
-          private: false,
-          clone_url: 'https://github.com/octocat/Hello-World.git'
-        },
-        {
-          id: 2,
-          name: 'test-repo',
-          full_name: 'demo-user/test-repo',
-          owner: { login: 'demo-user' },
-          private: false,
-          clone_url: 'https://github.com/demo-user/test-repo.git'
-        }
-      ];
-    }
-    
     const tokenData = await generateInstallationToken(installationId, env);
     
     const endpoint = 'https://api.github.com/installation/repositories';
@@ -431,37 +393,18 @@ export async function checkRepositoryInstallation(
   
   try {
     if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-      // In mock mode, only allow specific test repositories
-      const mockRepos = ['octocat/Hello-World', 'demo-user/test-repo'];
-      const fullName = `${owner}/${repo}`;
-      
-      if (mockRepos.includes(fullName)) {
-        logger.warn('github-auth', 'GitHub credentials not configured, mock repository found', {
-          owner,
-          repo,
-          fullName,
-          environment: env.ENVIRONMENT
-        });
-        timer.end();
-        return {
-          isInstalled: true,
-          installationId: 12345, // Mock installation ID for development
-          error: undefined
-        };
-      } else {
-        logger.warn('github-auth', 'GitHub credentials not configured, repository not in mock list', {
-          owner,
-          repo,
-          fullName,
-          environment: env.ENVIRONMENT,
-          mockRepos
-        });
-        timer.end();
-        return {
-          isInstalled: false,
-          error: 'GitHub App not installed on this repository'
-        };
-      }
+      const duration = timer.end();
+      logger.error('github-auth', 'GitHub App credentials not configured', {
+        owner,
+        repo,
+        environment: env.ENVIRONMENT,
+        hasAppId: !!env.GITHUB_APP_ID,
+        hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
+      });
+      return {
+        isInstalled: false,
+        error: 'GitHub App credentials (GITHUB_APP_ID and GITHUB_PRIVATE_KEY) are required'
+      };
     }
 
     const appJWT = generateAppJWT(env);
@@ -598,21 +541,6 @@ export async function validateInstallationAccess(
       });
       return { hasAccess: true };
     } else {
-      // For mock mode, check if this is one of the mock repositories
-      const mockRepos = ['octocat/Hello-World', 'demo-user/test-repo'];
-      const fullName = `${owner}/${repo}`;
-      
-      if (!env.GITHUB_APP_ID && mockRepos.includes(fullName)) {
-        logger.info('github-auth', 'Mock installation has access to repository', {
-          installationId,
-          owner,
-          repo,
-          fullName,
-          source: 'mock_data',
-          duration
-        });
-        return { hasAccess: true };
-      }
       
       logger.warn('github-auth', 'Installation does not have access to repository', {
         installationId,
@@ -657,28 +585,18 @@ export async function getAllInstallationsFromGitHub(
   
   logger.debug('github-auth', 'Fetching all installations from GitHub');
   
-  // Return mock data if no credentials are configured
+  // Ensure GitHub app credentials are configured
   if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-    logger.warn('github-auth', 'GitHub credentials not configured, using mock installations', {
-      environment: env.ENVIRONMENT
+    const duration = timer.end();
+    logger.error('github-auth', 'GitHub App credentials not configured', {
+      environment: env.ENVIRONMENT,
+      hasAppId: !!env.GITHUB_APP_ID,
+      hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
     });
-    
-    const mockInstallations: GitHubInstallation[] = [{
-      id: 12345,
-      account: {
-        id: 67890,
-        login: 'demo-user',
-        type: 'User'
-      },
-      permissions: {
-        contents: 'read',
-        metadata: 'read'
-      }
-    }];
-    
     return {
-      installations: mockInstallations,
-      source: 'mock'
+      installations: [],
+      source: 'github',
+      error: 'GitHub App credentials (GITHUB_APP_ID and GITHUB_PRIVATE_KEY) are required'
     };
   }
   
