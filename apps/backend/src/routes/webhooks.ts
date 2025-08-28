@@ -1,7 +1,16 @@
-import { Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
 import type { Env } from '../types.js';
 import { verifyWebhookSignature, getInstallationRepositories } from '../lib/github-auth.js';
 import { storeInstallation, deleteInstallation, storeWebhookEvent } from '../lib/database.js';
+import { 
+  WebhookPayloadSchema,
+  WebhookResponseSchema,
+} from '../schemas/webhooks.js';
+import {
+  BadRequestResponseSchema,
+  UnauthorizedResponseSchema,
+  InternalServerErrorResponseSchema,
+} from '../schemas/common.js';
 
 // Webhook payload type since we can't import from shared
 interface WebhookPayload {
@@ -30,61 +39,113 @@ interface WebhookPayload {
   };
 }
 
-export const webhookRoutes = new Hono<{ Bindings: Env }>();
+export const webhookRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
 // GitHub webhook endpoint
-webhookRoutes.post('/', async (c) => {
-  try {
-    const signature = c.req.header('x-hub-signature-256');
-    const eventType = c.req.header('x-github-event');
-    
-    if (!signature || !eventType) {
-      return c.json({ error: 'Missing webhook headers' }, 400);
-    }
+webhookRoutes.openapi(
+  {
+    method: 'post',
+    path: '/',
+    summary: 'GitHub webhook endpoint',
+    description: 'Handles GitHub webhook events for the app',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: WebhookPayloadSchema,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Webhook processed successfully',
+        content: {
+          'application/json': {
+            schema: WebhookResponseSchema,
+          },
+        },
+      },
+      400: {
+        description: 'Missing required headers',
+        content: {
+          'application/json': {
+            schema: BadRequestResponseSchema,
+          },
+        },
+      },
+      401: {
+        description: 'Invalid webhook signature',
+        content: {
+          'application/json': {
+            schema: UnauthorizedResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Internal server error',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Webhooks'],
+  },
+  async (c) => {
+    try {
+      const signature = c.req.header('x-hub-signature-256');
+      const eventType = c.req.header('x-github-event');
+      
+      if (!signature || !eventType) {
+        return c.json({ error: 'Missing webhook headers' }, 400);
+      }
 
-    // Get raw body for signature verification
-    const body = await c.req.text();
-    
-    // Verify webhook signature
-    const isValid = await verifyWebhookSignature(body, signature, c.env.GITHUB_WEBHOOK_SECRET || '');
-    if (!isValid) {
-      console.error('Invalid webhook signature');
-      return c.json({ error: 'Invalid signature' }, 401);
-    }
+      // Get raw body for signature verification
+      const body = await c.req.text();
+      
+      // Verify webhook signature
+      const isValid = await verifyWebhookSignature(body, signature, c.env.GITHUB_WEBHOOK_SECRET || '');
+      if (!isValid) {
+        console.error('Invalid webhook signature');
+        return c.json({ error: 'Invalid signature' }, 401);
+      }
 
-    const payload = JSON.parse(body) as WebhookPayload;
-    
-    // Store webhook event for debugging
-    await storeWebhookEvent(c.env.DB, {
-      event_type: eventType,
-      action: payload.action || null,
-      installation_id: payload.installation?.id || null,
-      repository_id: payload.repository?.id || null,
-      payload: body,
-      processed: false
-    });
-    
-    // Handle different webhook events
-    switch (eventType) {
-      case 'installation':
-        await handleInstallation(c, payload);
-        break;
-      case 'issues':
-        await handleIssues(c, payload);
-        break;
-      case 'pull_request':
-        await handlePullRequest(c, payload);
-        break;
-      default:
-        console.log(`Unhandled webhook event: ${eventType}`);
-    }
+      const payload = JSON.parse(body) as WebhookPayload;
+      
+      // Store webhook event for debugging
+      await storeWebhookEvent(c.env.DB, {
+        event_type: eventType,
+        action: payload.action || null,
+        installation_id: payload.installation?.id || null,
+        repository_id: payload.repository?.id || null,
+        payload: body,
+        processed: false
+      });
+      
+      // Handle different webhook events
+      switch (eventType) {
+        case 'installation':
+          await handleInstallation(c, payload);
+          break;
+        case 'issues':
+          await handleIssues(c, payload);
+          break;
+        case 'pull_request':
+          await handlePullRequest(c, payload);
+          break;
+        default:
+          console.log(`Unhandled webhook event: ${eventType}`);
+      }
 
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Webhook error:', error);
-    return c.json({ error: 'Internal server error' }, 500);
+      return c.json({ success: true });
+    } catch (error) {
+      console.error('Webhook error:', error);
+      return c.json({ error: 'Internal server error' }, 500);
+    }
   }
-});
+);
 
 async function handleInstallation(c: any, payload: WebhookPayload) {
   const { action, installation } = payload;

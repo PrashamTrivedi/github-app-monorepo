@@ -10,19 +10,7 @@ import { GitContainer } from './lib/git-container.js';
 import { HealthCheckResponseSchema } from './schemas/api.js';
 import type { Env } from './types.js';
 
-const app = new OpenAPIHono<{ Bindings: Env }>({
-  info: {
-    title: 'GitHub App Backend API',
-    version: '1.0.0',
-    description: 'Backend API for GitHub App with Cloudflare Workers and Containers'
-  },
-  servers: [
-    {
-      url: '/',
-      description: 'Current server'
-    }
-  ]
-});
+const app = new OpenAPIHono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', logger());
@@ -117,6 +105,7 @@ app.route('/git', gitRoutes);
 
 // OpenAPI documentation endpoints
 app.doc('/api-docs', {
+  openapi: '3.0.0',
   info: {
     title: 'GitHub App Backend API',
     version: '1.0.0',
@@ -131,12 +120,7 @@ app.doc('/api-docs', {
 });
 
 app.get('/swagger', swaggerUI({ 
-  url: '/api-docs',
-  config: {
-    persistAuthorization: true,
-    displayRequestDuration: true,
-    tryItOutEnabled: true,
-  }
+  url: '/api-docs'
 }));
 
 export default app;

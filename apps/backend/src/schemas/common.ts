@@ -1,12 +1,11 @@
 import { z } from 'zod';
 
 // Common API response schema
-export const ApiResponseSchema = <T extends z.ZodType>(dataSchema: T) =>
-  z.object({
-    success: z.boolean(),
-    data: dataSchema.nullable().optional(),
-    error: z.string().optional(),
-  });
+export const ApiResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.any().optional(),
+  error: z.string().optional(),
+});
 
 // Common error response schemas
 export const ErrorResponseSchema = z.object({

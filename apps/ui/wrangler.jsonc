@@ -7,20 +7,20 @@
       "vars": {
         "NEXT_PUBLIC_API_BASE_URL": "https://github-app-backend.your-subdomain.workers.dev",
         "ENVIRONMENT": "production",
-        "NEXT_PUBLIC_GITHUB_APP_NAME": "your-github-app-name"
+        "NEXT_PUBLIC_GITHUB_APP_NAME": "online-dev-team"
       }
     },
     "staging": {
       "vars": {
         "NEXT_PUBLIC_API_BASE_URL": "https://github-app-backend-staging.your-subdomain.workers.dev",
         "ENVIRONMENT": "staging",
-        "NEXT_PUBLIC_GITHUB_APP_NAME": "your-github-app-name"
+        "NEXT_PUBLIC_GITHUB_APP_NAME": "online-dev-team"
       }
     }
   },
   "vars": {
     "NEXT_PUBLIC_API_BASE_URL": "http://localhost:8787",
     "ENVIRONMENT": "development",
-    "NEXT_PUBLIC_GITHUB_APP_NAME": "your-github-app-name"
+    "NEXT_PUBLIC_GITHUB_APP_NAME": "online-dev-team"
   }
 }

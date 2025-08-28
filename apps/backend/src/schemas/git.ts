@@ -34,16 +34,16 @@ export const CommitRequestSchema = BaseGitOperationSchema.extend({
 export const GitOperationRecordSchema = z.object({
   id: z.number(),
   operation_type: GitOperationTypeSchema,
-  repository_id: z.number(),
+  repository_id: z.number().nullable(),
   repository_name: z.string().optional(),
   branch: z.string(),
   status: z.enum(['pending', 'running', 'completed', 'failed']),
   result: z.string().nullable(),
   created_at: z.string(),
-  updated_at: z.string(),
+  completed_at: z.string().nullable(),
 });
 
 // Response schemas
-export const GitOperationResponseSchema = ApiResponseSchema(z.string());
-export const GetOperationResponseSchema = ApiResponseSchema(GitOperationRecordSchema);
-export const ListOperationsResponseSchema = ApiResponseSchema(z.array(GitOperationRecordSchema));
+export const GitOperationResponseSchema = ApiResponseSchema;
+export const GetOperationResponseSchema = ApiResponseSchema;
+export const ListOperationsResponseSchema = ApiResponseSchema;

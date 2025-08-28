@@ -12,9 +12,7 @@ export const InstallationSchema = z.object({
   updated_at: z.string(),
 });
 
-export const InstallationsResponseSchema = ApiResponseSchema(
-  z.array(InstallationSchema)
-);
+export const InstallationsResponseSchema = ApiResponseSchema;
 
 // Repository schema from GitHub API
 export const GitHubRepositorySchema = z.object({
@@ -52,7 +50,7 @@ export const GitHubRepositorySchema = z.object({
   updated_at: z.string(),
 });
 
-export const RepositoryResponseSchema = ApiResponseSchema(GitHubRepositorySchema);
+export const RepositoryResponseSchema = ApiResponseSchema;
 
 // GitHub Issue schema
 export const GitHubIssueSchema = z.object({
@@ -108,7 +106,7 @@ export const GitHubIssueSchema = z.object({
   }).optional(),
 });
 
-export const IssuesResponseSchema = ApiResponseSchema(z.array(GitHubIssueSchema));
+export const IssuesResponseSchema = ApiResponseSchema;
 
 // Query parameters for issues endpoint
 export const IssuesQuerySchema = z.object({
@@ -125,7 +123,7 @@ export const ParsedRepositorySchema = z.object({
   repo: z.string().describe('Repository name'),
 });
 
-export const ValidateRepoResponseSchema = ApiResponseSchema(ParsedRepositorySchema);
+export const ValidateRepoResponseSchema = ApiResponseSchema;
 
 // Health check response schema
 export const HealthCheckResponseSchema = z.object({

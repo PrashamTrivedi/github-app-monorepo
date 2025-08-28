@@ -12,7 +12,8 @@
     "type-check": "tsc --noEmit",
     "clean": "rm -rf .next dist",
     "deploy": "wrangler pages deploy .next --project-name github-app-ui",
-    "preview": "wrangler pages dev .next --port 3000"
+    "preview": "wrangler pages dev .next --port 3000",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "@github-app/shared": "workspace:*",

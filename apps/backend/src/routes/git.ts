@@ -152,69 +152,184 @@ gitRoutes.openapi(
 );
 
 // Commit and push changes
-gitRoutes.post('/commit', async (c) => {
-  try {
-    const { repository, message, files, branch } = await c.req.json();
-    
-    const operation: GitOperation = {
-      type: 'commit',
-      repository,
-      message,
-      files,
-      branch: branch || 'main'
-    };
-    
-    const result = await executeGitOperation(c, operation);
-    
-    return c.json(createApiResponse(true, result));
-  } catch (error) {
-    console.error('Commit error:', error);
-    return c.json(createApiResponse(false, null, 'Commit operation failed'), 500);
+gitRoutes.openapi(
+  {
+    method: 'post',
+    path: '/commit',
+    summary: 'Commit and push changes',
+    description: 'Commits file changes and pushes them to the repository',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: CommitRequestSchema,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Changes committed and pushed successfully',
+        content: {
+          'application/json': {
+            schema: GitOperationResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Commit operation failed',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Git Operations'],
+  },
+  async (c) => {
+    try {
+      const { repository, message, files, branch } = c.req.valid('json');
+      
+      const operation: GitOperation = {
+        type: 'commit',
+        repository,
+        message,
+        files,
+        branch: branch || 'main'
+      };
+      
+      const result = await executeGitOperation(c, operation);
+      
+      return c.json(createApiResponse(true, result));
+    } catch (error) {
+      console.error('Commit error:', error);
+      return c.json(createApiResponse(false, null, 'Commit operation failed'), 500);
+    }
   }
-});
+);
 
 // Get git operation status
-gitRoutes.get('/operation/:id', async (c) => {
-  try {
-    const operationId = parseInt(c.req.param('id'));
-    
-    if (isNaN(operationId)) {
-      return c.json(createApiResponse(false, null, 'Invalid operation ID'), 400);
+gitRoutes.openapi(
+  {
+    method: 'get',
+    path: '/operation/{id}',
+    summary: 'Get git operation status',
+    description: 'Returns the status and details of a specific git operation',
+    request: {
+      params: IdParamSchema,
+    },
+    responses: {
+      200: {
+        description: 'Git operation details',
+        content: {
+          'application/json': {
+            schema: GetOperationResponseSchema,
+          },
+        },
+      },
+      400: {
+        description: 'Invalid operation ID',
+        content: {
+          'application/json': {
+            schema: BadRequestResponseSchema,
+          },
+        },
+      },
+      404: {
+        description: 'Operation not found',
+        content: {
+          'application/json': {
+            schema: NotFoundResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Internal server error',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Git Operations'],
+  },
+  async (c) => {
+    try {
+      const { id } = c.req.valid('param');
+      
+      const operation = await getGitOperation(c.env.DB, id);
+      
+      if (!operation) {
+        return c.json(createApiResponse(false, null, 'Operation not found'), 404);
+      }
+      
+      return c.json(createApiResponse(true, operation));
+    } catch (error) {
+      console.error('Get operation error:', error);
+      return c.json(createApiResponse(false, null, 'Failed to get operation status'), 500);
     }
-    
-    const operation = await getGitOperation(c.env.DB, operationId);
-    
-    if (!operation) {
-      return c.json(createApiResponse(false, null, 'Operation not found'), 404);
-    }
-    
-    return c.json(createApiResponse(true, operation));
-  } catch (error) {
-    console.error('Get operation error:', error);
-    return c.json(createApiResponse(false, null, 'Failed to get operation status'), 500);
   }
-});
+);
 
 // Get recent git operations for a repository
-gitRoutes.get('/repository/:owner/:name/operations', async (c) => {
-  try {
-    const owner = c.req.param('owner');
-    const name = c.req.param('name');
-    const fullName = `${owner}/${name}`;
-    
-    const repository = await getRepositoryByName(c.env.DB, fullName);
-    if (!repository) {
-      return c.json(createApiResponse(false, null, 'Repository not found'), 404);
+gitRoutes.openapi(
+  {
+    method: 'get',
+    path: '/repository/{owner}/{name}/operations',
+    summary: 'Get repository git operations',
+    description: 'Returns recent git operations for a specific repository',
+    request: {
+      params: OwnerParamSchema.merge(NameParamSchema),
+    },
+    responses: {
+      200: {
+        description: 'List of recent git operations',
+        content: {
+          'application/json': {
+            schema: ListOperationsResponseSchema,
+          },
+        },
+      },
+      404: {
+        description: 'Repository not found',
+        content: {
+          'application/json': {
+            schema: NotFoundResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Internal server error',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Git Operations'],
+  },
+  async (c) => {
+    try {
+      const { owner, name } = c.req.valid('param');
+      const fullName = `${owner}/${name}`;
+      
+      const repository = await getRepositoryByName(c.env.DB, fullName);
+      if (!repository) {
+        return c.json(createApiResponse(false, null, 'Repository not found'), 404);
+      }
+      
+      const operations = await getRecentGitOperations(c.env.DB, repository.id, 20);
+      
+      return c.json(createApiResponse(true, operations));
+    } catch (error) {
+      console.error('Get repository operations error:', error);
+      return c.json(createApiResponse(false, null, 'Failed to get repository operations'), 500);
     }
-    
-    const operations = await getRecentGitOperations(c.env.DB, repository.id, 20);
-    
-    return c.json(createApiResponse(true, operations));
-  } catch (error) {
-    console.error('Get repository operations error:', error);
-    return c.json(createApiResponse(false, null, 'Failed to get repository operations'), 500);
   }
-});
+);
 
 async function executeGitOperation(c: any, operation: GitOperation): Promise<string> {
   const env: Env = c.env;
