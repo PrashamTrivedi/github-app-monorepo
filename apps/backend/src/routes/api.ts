@@ -17,6 +17,7 @@ import {
   IssuesQuerySchema,
   ValidateRepoRequestSchema,
   ValidateRepoResponseSchema,
+  InstallationsResponseSchema,
 } from '../schemas/api.js';
 import {
   OwnerRepoParamSchema,
@@ -49,8 +50,34 @@ apiRoutes.get('/debug/env', async (c) => {
   });
 });
 
-// Get installations - simplified without OpenAPI for now due to schema complexity
-apiRoutes.get('/installations', async (c) => {
+// Get installations
+apiRoutes.openapi(
+  {
+    method: 'get',
+    path: '/installations',
+    summary: 'Get GitHub App installations',
+    description: 'Returns all GitHub App installations accessible to the app',
+    responses: {
+      200: {
+        description: 'List of installations',
+        content: {
+          'application/json': {
+            schema: InstallationsResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Internal server error',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Installations'],
+  },
+  async (c) => {
     const logger = new Logger(c.env);
     const timer = new PerformanceTimer();
     
