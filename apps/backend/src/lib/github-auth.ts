@@ -399,7 +399,8 @@ export async function checkRepositoryInstallation(
         repo,
         environment: env.ENVIRONMENT,
         hasAppId: !!env.GITHUB_APP_ID,
-        hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
+        hasPrivateKey: !!env.GITHUB_PRIVATE_KEY,
+        duration
       });
       return {
         isInstalled: false,
@@ -591,7 +592,8 @@ export async function getAllInstallationsFromGitHub(
     logger.error('github-auth', 'GitHub App credentials not configured', {
       environment: env.ENVIRONMENT,
       hasAppId: !!env.GITHUB_APP_ID,
-      hasPrivateKey: !!env.GITHUB_PRIVATE_KEY
+      hasPrivateKey: !!env.GITHUB_PRIVATE_KEY,
+      duration
     });
     return {
       installations: [],
