@@ -61,8 +61,7 @@ export function generateAppJWT(env: Env): string {
     if (!privateKey && env.GITHUB_PRIVATE_KEY_CHUNK_1) {
       privateKey = [
         env.GITHUB_PRIVATE_KEY_CHUNK_1,
-        env.GITHUB_PRIVATE_KEY_CHUNK_2,
-        env.GITHUB_PRIVATE_KEY_CHUNK_3
+        env.GITHUB_PRIVATE_KEY_CHUNK_2
       ].filter(Boolean).join('');
     }
     

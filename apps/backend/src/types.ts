@@ -17,7 +17,6 @@ export interface Env extends Cloudflare.Env {
   // Private key chunks (workaround for Cloudflare secret size limit)
   GITHUB_PRIVATE_KEY_CHUNK_1?: string;
   GITHUB_PRIVATE_KEY_CHUNK_2?: string;
-  GITHUB_PRIVATE_KEY_CHUNK_3?: string;
   
   // Optional runtime configuration
   CONTAINER_TIMEOUT?: string;
