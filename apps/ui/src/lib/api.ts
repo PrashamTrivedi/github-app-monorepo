@@ -15,19 +15,41 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`;
     
-    const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      ...options,
-    });
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+        ...options,
+      });
 
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      // Always try to parse the JSON response, even on errors
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        // If we have structured error data, preserve it
+        if (data && !data.success && data.error) {
+          return data as ApiResponse<T>;
+        }
+        
+        // Fallback to generic error for unstructured responses
+        return {
+          success: false,
+          data: null,
+          error: `API request failed: ${response.status} ${response.statusText}`
+        } as ApiResponse<T>;
+      }
+
+      return data as ApiResponse<T>;
+    } catch (error) {
+      // Handle network errors or JSON parsing errors
+      return {
+        success: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'Network error occurred'
+      } as ApiResponse<T>;
     }
-
-    return response.json();
   }
 
   // Repository operations

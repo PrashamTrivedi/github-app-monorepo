@@ -22,6 +22,7 @@ export function RepositoryManager({
   const [isLoading, setIsLoading] = useState(false);
   const [customRepoUrl, setCustomRepoUrl] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Collect all repositories from installations
@@ -49,11 +50,13 @@ export function RepositoryManager({
 
     const parsed = parseRepositoryUrl(customRepoUrl);
     if (!parsed) {
-      alert('Invalid GitHub repository URL');
+      setError('Please enter a valid GitHub repository URL (e.g., https://github.com/owner/repo)');
       return;
     }
 
     setIsLoading(true);
+    setError(null);
+    
     try {
       const response = await apiClient.getRepository(parsed.owner, parsed.repo);
       if (response.success && response.data) {
@@ -61,11 +64,34 @@ export function RepositoryManager({
         onSelectRepository(repo);
         setShowCustomInput(false);
         setCustomRepoUrl('');
+        setError(null);
       } else {
-        alert('Repository not found or not accessible');
+        // Enhanced error handling based on specific error messages
+        const errorMessage = response.error || 'Repository not found or not accessible';
+        
+        if (errorMessage.includes('GitHub App not installed')) {
+          setError(
+            `The GitHub App is not installed on this repository. Please install the app on "${parsed.owner}/${parsed.repo}" first, then try again.`
+          );
+        } else if (errorMessage.includes('Repository not synced')) {
+          setError(
+            `The repository "${parsed.owner}/${parsed.repo}" was found but not synced yet. This usually resolves automatically within a few minutes. Try refreshing or wait for webhooks to sync the repository.`
+          );
+        } else if (errorMessage.includes('no longer has access')) {
+          setError(
+            `The GitHub App no longer has access to "${parsed.owner}/${parsed.repo}". The repository may have been removed from the installation or the installation may have been deleted.`
+          );
+        } else {
+          setError(
+            `Unable to access "${parsed.owner}/${parsed.repo}". This could be because:\n• The repository doesn't exist or is private\n• The GitHub App is not installed on this repository\n• You don't have permission to access this repository`
+          );
+        }
       }
     } catch (error) {
-      alert('Failed to load repository information');
+      console.error('Repository fetch error:', error);
+      setError(
+        'Failed to connect to the repository service. Please check your internet connection and try again.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -93,6 +119,33 @@ export function RepositoryManager({
           </button>
         </div>
 
+        {/* Error Display */}
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <div className="flex">
+              <svg className="w-5 h-5 text-red-400 mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-red-800 dark:text-red-200">
+                  Repository Access Error
+                </h3>
+                <div className="mt-1 text-sm text-red-700 dark:text-red-300 whitespace-pre-line">
+                  {error}
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={() => setError(null)}
+                    className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 font-medium"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Custom Repository Input */}
         {showCustomInput && (
           <div className="mb-4 p-4 bg-gray-50 dark:bg-github-700 rounded-lg">
@@ -100,16 +153,24 @@ export function RepositoryManager({
               <input
                 type="url"
                 value={customRepoUrl}
-                onChange={(e) => setCustomRepoUrl(e.target.value)}
+                onChange={(e) => {
+                  setCustomRepoUrl(e.target.value);
+                  if (error) setError(null); // Clear error when user starts typing
+                }}
                 placeholder="https://github.com/owner/repository"
                 className="flex-1 px-3 py-2 border border-github-300 dark:border-github-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-github-600 dark:text-white"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleCustomRepository();
+                  }
+                }}
               />
               <button
                 onClick={handleCustomRepository}
                 disabled={!customRepoUrl.trim() || isLoading}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-md"
               >
-                {isLoading ? 'Loading...' : 'Add'}
+                {isLoading ? 'Checking...' : 'Add'}
               </button>
             </div>
             <p className="mt-2 text-xs text-github-500 dark:text-github-400">
