@@ -699,6 +699,159 @@ apiRoutes.get('/repo/:owner/:repo/installation-status', async (c) => {
     }
 });
 
+// Handle GitHub App installation callback
+apiRoutes.get('/installation/callback', async (c) => {
+    const logger = new Logger(c.env);
+    const timer = new PerformanceTimer();
+    
+    try {
+      const installationId = c.req.query('installation_id');
+      const setupAction = c.req.query('setup_action');
+      const state = c.req.query('state'); // Return URL
+      
+      logger.info('api', 'Processing GitHub App installation callback', {
+        installationId,
+        setupAction,
+        hasState: !!state
+      });
+      
+      if (!installationId) {
+        const duration = timer.end();
+        logger.warn('api', 'Installation callback missing installation_id', {
+          query: c.req.query(),
+          duration
+        });
+        return c.json(createApiResponse(false, null, 'Missing installation_id parameter'), 400);
+      }
+      
+      if (!c.env.GITHUB_APP_ID || !c.env.GITHUB_PRIVATE_KEY) {
+        const duration = timer.end();
+        logger.warn('api', 'GitHub App not configured for installation callback', {
+          installationId,
+          setupAction,
+          duration
+        });
+        
+        // For development, return success but indicate mock mode
+        return c.json(createApiResponse(true, {
+          installationId: parseInt(installationId),
+          message: 'Installation callback received (development mode)',
+          mock: true
+        }));
+      }
+      
+      try {
+        // Fetch installation details from GitHub
+        const installation = await getInstallation(parseInt(installationId), c.env);
+        
+        // Get installation repositories
+        const repositories = await getInstallationRepositories(parseInt(installationId), c.env);
+        
+        // Store installation with repositories
+        const installationWithRepos = {
+          ...installation,
+          repositories
+        };
+        
+        const dbTimer = new PerformanceTimer();
+        await storeInstallation(c.env.DB, installationWithRepos);
+        const dbDuration = dbTimer.end();
+        
+        logger.logDatabaseOperation('INSERT installation callback', 'installations', dbDuration, {
+          installationId: installation.id,
+          accountLogin: installation.account.login,
+          repositoryCount: repositories.length
+        });
+        
+        const duration = timer.end();
+        logger.info('api', 'Installation callback processed successfully', {
+          installationId: installation.id,
+          accountLogin: installation.account.login,
+          repositoryCount: repositories.length,
+          duration
+        });
+        
+        return c.json(createApiResponse(true, {
+          installationId: installation.id,
+          account: installation.account,
+          repositoryCount: repositories.length,
+          message: 'Installation synchronized successfully'
+        }));
+        
+      } catch (error) {
+        const duration = timer.end();
+        logger.error('api', 'Error processing installation callback', {
+          installationId,
+          error: error instanceof Error ? error.message : String(error),
+          duration
+        });
+        return c.json(
+          createApiResponse(false, null, 'Failed to process installation'), 
+          500
+        );
+      }
+    } catch (error) {
+      const duration = timer.end();
+      logger.error('api', 'Installation callback error', {
+        error: error instanceof Error ? error.message : String(error),
+        duration
+      });
+      return c.json(createApiResponse(false, null, 'Installation callback failed'), 500);
+    }
+});
+
+// Check GitHub App configuration status
+apiRoutes.get('/github-app/status', async (c) => {
+    const logger = new Logger(c.env);
+    const timer = new PerformanceTimer();
+    
+    try {
+      const hasCredentials = !!(c.env.GITHUB_APP_ID && c.env.GITHUB_PRIVATE_KEY);
+      
+      let appInfo = null;
+      if (hasCredentials) {
+        try {
+          // Try to generate a JWT to test credentials
+          const jwt = generateAppJWT(c.env);
+          const isValid = !!jwt;
+          
+          appInfo = {
+            appId: c.env.GITHUB_APP_ID,
+            configured: true,
+            credentialsValid: isValid
+          };
+        } catch (error) {
+          appInfo = {
+            appId: c.env.GITHUB_APP_ID,
+            configured: true,
+            credentialsValid: false,
+            error: error instanceof Error ? error.message : 'Invalid credentials'
+          };
+        }
+      } else {
+        appInfo = {
+          configured: false,
+          mode: 'development'
+        };
+      }
+      
+      const duration = timer.end();
+      logger.info('api', 'GitHub App status checked', {
+        configured: hasCredentials,
+        duration
+      });
+      
+      return c.json(createApiResponse(true, appInfo));
+    } catch (error) {
+      const duration = timer.end();
+      logger.error('api', 'Error checking GitHub App status', {
+        error: error instanceof Error ? error.message : String(error),
+        duration
+      });
+      return c.json(createApiResponse(false, null, 'Failed to check app status'), 500);
+    }
+});
+
 // Validate repository URL
 apiRoutes.openapi(
   {
