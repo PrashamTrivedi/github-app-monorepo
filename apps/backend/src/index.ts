@@ -1,4 +1,5 @@
-import { Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
+import { swaggerUI } from '@hono/swagger-ui';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 
@@ -6,9 +7,22 @@ import { webhookRoutes } from './routes/webhooks.js';
 import { apiRoutes } from './routes/api.js';
 import { gitRoutes } from './routes/git.js';
 import { GitContainer } from './lib/git-container.js';
+import { HealthCheckResponseSchema } from './schemas/api.js';
 import type { Env } from './types.js';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new OpenAPIHono<{ Bindings: Env }>({
+  info: {
+    title: 'GitHub App Backend API',
+    version: '1.0.0',
+    description: 'Backend API for GitHub App with Cloudflare Workers and Containers'
+  },
+  servers: [
+    {
+      url: '/',
+      description: 'Current server'
+    }
+  ]
+});
 
 // Middleware
 app.use('*', logger());
@@ -18,13 +32,32 @@ app.use('*', cors({
 }));
 
 // Health check
-app.get('/', (c) => {
-  return c.json({ 
-    message: 'GitHub App Backend API',
-    environment: c.env.ENVIRONMENT,
-    timestamp: new Date().toISOString()
-  });
-});
+app.openapi(
+  {
+    method: 'get',
+    path: '/',
+    summary: 'Health check endpoint',
+    description: 'Returns API status and basic information',
+    responses: {
+      200: {
+        description: 'API health status',
+        content: {
+          'application/json': {
+            schema: HealthCheckResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Health'],
+  },
+  (c) => {
+    return c.json({
+      message: 'GitHub App Backend API',
+      environment: c.env.ENVIRONMENT,
+      timestamp: new Date().toISOString()
+    });
+  }
+);
 
 // Environment validation middleware
 app.use('/api/*', async (c, next) => {
@@ -81,6 +114,30 @@ app.use('*', async (c, next) => {
 app.route('/webhooks', webhookRoutes);
 app.route('/api', apiRoutes);
 app.route('/git', gitRoutes);
+
+// OpenAPI documentation endpoints
+app.doc('/api-docs', {
+  info: {
+    title: 'GitHub App Backend API',
+    version: '1.0.0',
+    description: 'Backend API for GitHub App with Cloudflare Workers and Containers'
+  },
+  servers: [
+    {
+      url: '/',
+      description: 'Current server'
+    }
+  ]
+});
+
+app.get('/swagger', swaggerUI({ 
+  url: '/api-docs',
+  config: {
+    persistAuthorization: true,
+    displayRequestDuration: true,
+    tryItOutEnabled: true,
+  }
+}));
 
 export default app;
 

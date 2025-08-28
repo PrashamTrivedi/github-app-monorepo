@@ -1,6 +1,30 @@
-import { Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
 import type { Env } from '../types.js';
 import { generateInstallationToken } from '../lib/github-auth.js';
+import { 
+  getRepositoryByName, 
+  createGitOperation, 
+  updateGitOperation, 
+  getGitOperation, 
+  getRecentGitOperations 
+} from '../lib/database.js';
+import { GitContainerService } from '../lib/git-container.js';
+import {
+  GitOperationRequestSchema,
+  CloneRequestSchema,
+  CommitRequestSchema,
+  GitOperationResponseSchema,
+  GetOperationResponseSchema,
+  ListOperationsResponseSchema,
+} from '../schemas/git.js';
+import {
+  IdParamSchema,
+  OwnerParamSchema,
+  NameParamSchema,
+  BadRequestResponseSchema,
+  NotFoundResponseSchema,
+  InternalServerErrorResponseSchema,
+} from '../schemas/common.js';
 
 // Simple response helper since we can't import from shared
 function createApiResponse<T>(success: boolean, data?: T | null, error?: string) {
@@ -18,50 +42,114 @@ interface GitOperation {
     content: string;
   }>;
 }
-import { 
-  getRepositoryByName, 
-  createGitOperation, 
-  updateGitOperation, 
-  getGitOperation, 
-  getRecentGitOperations 
-} from '../lib/database.js';
-import { GitContainerService } from '../lib/git-container.js';
 
-export const gitRoutes = new Hono<{ Bindings: Env }>();
+export const gitRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
 // Execute git operations using Cloudflare containers
-gitRoutes.post('/operation', async (c) => {
-  try {
-    const operation: GitOperation = await c.req.json();
-    
-    const result = await executeGitOperation(c, operation);
-    
-    return c.json(createApiResponse(true, result));
-  } catch (error) {
-    console.error('Git operation error:', error);
-    return c.json(createApiResponse(false, null, 'Git operation failed'), 500);
+gitRoutes.openapi(
+  {
+    method: 'post',
+    path: '/operation',
+    summary: 'Execute git operation',
+    description: 'Executes a git operation (clone, pull, push, or commit) using Cloudflare containers',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: GitOperationRequestSchema,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Git operation completed successfully',
+        content: {
+          'application/json': {
+            schema: GitOperationResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Git operation failed',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Git Operations'],
+  },
+  async (c) => {
+    try {
+      const operation = c.req.valid('json') as GitOperation;
+      
+      const result = await executeGitOperation(c, operation);
+      
+      return c.json(createApiResponse(true, result));
+    } catch (error) {
+      console.error('Git operation error:', error);
+      return c.json(createApiResponse(false, null, 'Git operation failed'), 500);
+    }
   }
-});
+);
 
 // Clone repository
-gitRoutes.post('/clone', async (c) => {
-  try {
-    const { repository, branch } = await c.req.json();
-    
-    const operation: GitOperation = {
-      type: 'clone',
-      repository,
-      branch: branch || 'main'
-    };
-    
-    const result = await executeGitOperation(c, operation);
-    
-    return c.json(createApiResponse(true, result));
-  } catch (error) {
-    console.error('Clone error:', error);
-    return c.json(createApiResponse(false, null, 'Clone operation failed'), 500);
+gitRoutes.openapi(
+  {
+    method: 'post',
+    path: '/clone',
+    summary: 'Clone repository',
+    description: 'Clones a GitHub repository to the container filesystem',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: CloneRequestSchema,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Repository cloned successfully',
+        content: {
+          'application/json': {
+            schema: GitOperationResponseSchema,
+          },
+        },
+      },
+      500: {
+        description: 'Clone operation failed',
+        content: {
+          'application/json': {
+            schema: InternalServerErrorResponseSchema,
+          },
+        },
+      },
+    },
+    tags: ['Git Operations'],
+  },
+  async (c) => {
+    try {
+      const { repository, branch } = c.req.valid('json');
+      
+      const operation: GitOperation = {
+        type: 'clone',
+        repository,
+        branch: branch || 'main'
+      };
+      
+      const result = await executeGitOperation(c, operation);
+      
+      return c.json(createApiResponse(true, result));
+    } catch (error) {
+      console.error('Clone error:', error);
+      return c.json(createApiResponse(false, null, 'Clone operation failed'), 500);
+    }
   }
-});
+);
 
 // Commit and push changes
 gitRoutes.post('/commit', async (c) => {
