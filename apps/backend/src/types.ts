@@ -9,10 +9,15 @@ export interface Env extends Cloudflare.Env {
   
   // Environment variables (secrets)
   GITHUB_APP_ID: string;
-  GITHUB_PRIVATE_KEY: string;
+  GITHUB_PRIVATE_KEY?: string;
   GITHUB_WEBHOOK_SECRET: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  
+  // Private key chunks (workaround for Cloudflare secret size limit)
+  GITHUB_PRIVATE_KEY_CHUNK_1?: string;
+  GITHUB_PRIVATE_KEY_CHUNK_2?: string;
+  GITHUB_PRIVATE_KEY_CHUNK_3?: string;
   
   // Optional runtime configuration
   CONTAINER_TIMEOUT?: string;

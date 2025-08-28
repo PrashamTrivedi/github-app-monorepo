@@ -7,7 +7,7 @@ export const InstallationSchema = z.object({
   account_id: z.number(),
   account_login: z.string(),
   account_type: z.string(),
-  permissions: z.record(z.string()),
+  permissions: z.record(z.string(), z.string()),
   created_at: z.string(),
   updated_at: z.string(),
 });

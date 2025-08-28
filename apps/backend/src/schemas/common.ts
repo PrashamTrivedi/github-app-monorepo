@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
-// Common API response schema
+// Common API response schema - using unknown instead of any for OpenAPI compatibility
 export const ApiResponseSchema = z.object({
   success: z.boolean(),
-  data: z.any().optional(),
+  data: z.unknown().optional(),
   error: z.string().optional(),
 });
 

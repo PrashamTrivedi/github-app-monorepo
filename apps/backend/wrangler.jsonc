@@ -8,6 +8,7 @@
       "vars": {
         "ENVIRONMENT": "production"
       },
+      "secrets": ["GITHUB_APP_ID", "GITHUB_WEBHOOK_SECRET", "GITHUB_PRIVATE_KEY_CHUNK_1", "GITHUB_PRIVATE_KEY_CHUNK_2", "GITHUB_PRIVATE_KEY_CHUNK_3"],
       "d1_databases": [
         {
           "binding": "DB",
@@ -26,6 +27,7 @@
       "vars": {
         "ENVIRONMENT": "staging"
       },
+      "secrets": ["GITHUB_APP_ID", "GITHUB_WEBHOOK_SECRET", "GITHUB_PRIVATE_KEY_CHUNK_1", "GITHUB_PRIVATE_KEY_CHUNK_2", "GITHUB_PRIVATE_KEY_CHUNK_3"],
       "d1_databases": [
         {
           "binding": "DB",

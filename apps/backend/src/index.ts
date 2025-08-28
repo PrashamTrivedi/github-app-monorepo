@@ -7,10 +7,17 @@ import { webhookRoutes } from './routes/webhooks.js';
 import { apiRoutes } from './routes/api.js';
 import { gitRoutes } from './routes/git.js';
 import { GitContainer } from './lib/git-container.js';
-import { HealthCheckResponseSchema } from './schemas/api.js';
+import { z } from 'zod';
 import type { Env } from './types.js';
 
 const app = new OpenAPIHono<{ Bindings: Env }>();
+
+// Simple health check response schema
+const HealthCheckResponseSchema = z.object({
+  message: z.string(),
+  environment: z.string(),
+  timestamp: z.string(),
+});
 
 // Middleware
 app.use('*', logger());

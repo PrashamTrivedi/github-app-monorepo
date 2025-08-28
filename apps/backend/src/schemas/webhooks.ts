@@ -22,7 +22,7 @@ export const GitHubRepositorySchema = z.object({
 export const GitHubInstallationSchema = z.object({
   id: z.number(),
   account: GitHubAccountSchema,
-  permissions: z.record(z.string()),
+  permissions: z.record(z.string(), z.string()),
   events: z.array(z.string()).optional(),
   single_file_name: z.string().nullable().optional(),
 });
