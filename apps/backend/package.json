@@ -20,7 +20,7 @@
     "@hono/zod-openapi": "^1.1.0",
     "@octokit/app": "^14.0.0",
     "@octokit/rest": "^20.0.0",
-    "hono": "^4.0.0",
+    "hono": "^4.9.6",
     "jsonwebtoken": "^9.0.2",
     "zod": "^4.1.4"
   },
